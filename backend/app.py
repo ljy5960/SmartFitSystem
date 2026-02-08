@@ -95,6 +95,8 @@ def login():
     return jsonify({'msg': '用户名或密码错误'}), 401
 
 
+# ... (保留前面的引用和配置)
+
 @app.route('/predict', methods=['POST'])
 @jwt_required()
 def predict():
@@ -105,39 +107,34 @@ def predict():
         current_user_id = int(get_jwt_identity())
         data = request.json
 
-        # --- 🛠️ 关键修复：正确处理 0 值 ---
-        # 使用 data.get('key') 如果 key 不存在返回 None
-        # 如果是 0，则保留 0；如果是 None，才用默认值
-
+        # --- 数据提取 ---
         raw_h = data.get('height')
         h_val = float(raw_h) if raw_h is not None else 0.0
 
         raw_w = data.get('waist')
         w_val = float(raw_w) if raw_w is not None else 0.0
 
-        # 臀围自动补全逻辑
-        raw_hips = data.get('hips')
-        if raw_hips is not None and float(raw_hips) > 0:
-            hips_val = float(raw_hips)
-        elif w_val > 0:
-            hips_val = w_val * 1.4  # 自动估算
-            print(f"ℹ️ 自动估算臀围: {hips_val}")
+        # 🛠️ 核心修复：强制接管臀围逻辑 🛠️
+        # 不管前端传没传 hips (通常是默认值 90)，我们都强制用腰围反推
+        # 只有这样才能匹配 V11 模型的训练分布
+        if w_val > 0:
+            hips_val = w_val * 1.4
+            print(f"✅ 强制修正臀围: {hips_val:.1f} (基于腰围 {w_val}, 忽略前端输入)")
         else:
-            hips_val = 0.0
+            hips_val = float(data.get('hips') or 0)  # 只有腰围是0时才看前端
 
         raw_bra = data.get('bra_num')
         bra_val = float(raw_bra) if raw_bra is not None else 0.0
 
         raw_size = data.get('size')
-        # ⚠️ 这里是修复的核心：显式检查 None，而不是用 or
+        # 0值修复逻辑保留
         size_val = float(raw_size) if raw_size is not None else 6.0
 
         cup_val = data.get('cup_size', 'b')
         cat_val = data.get('category', 'dresses')
 
-        print(f"🔍 接收到的尺码: {raw_size} -> 解析为: {size_val}")  # 调试日志
-
-        # 1. 更新用户表
+        # ... (后续代码保持不变，存入数据库等)
+        # 1. 更新用户表 ...
         user = db.session.get(User, current_user_id)
         if user:
             user.height = h_val
@@ -147,10 +144,10 @@ def predict():
             user.cup_size = cup_val
             db.session.commit()
 
-        # 2. 计算 BMI
+        # 2. 计算 BMI ...
         bmi_val = w_val / h_val if h_val > 0 else 0
 
-        # 3. 构建预测数据
+        # 3. 构建预测数据 ...
         input_df = pd.DataFrame({
             'cup_size': [cup_val],
             'bra_num': [bra_val],
@@ -162,7 +159,7 @@ def predict():
             'bmi_proxy': [bmi_val]
         })
 
-        # 4. 预测
+        # 4. 预测 ...
         probs = model.predict_proba(input_df)[0]
         pred_idx = int(np.argmax(probs))
 
@@ -176,17 +173,17 @@ def predict():
         confidence_str = f"{prob_fit * 100:.1f}%"
         img_url = get_category_image(cat_val)
 
-        # 5. 存入历史
+        # 5. 存入历史 ...
         new_history = History(
             user_id=current_user_id,
             category=cat_val,
-            size_input=size_val,  # 这里存的也会是正确的 0 了
+            size_input=size_val,
             image_url=img_url,
             result=result_str,
             confidence=confidence_str,
             height=h_val,
             waist=w_val,
-            hips=hips_val,
+            hips=hips_val,  # 这里存的将是计算后的正确值 (如 126)
             bra_size=bra_val,
             cup_size=cup_val
         )
@@ -206,6 +203,9 @@ def predict():
     except Exception as e:
         traceback.print_exc()
         return jsonify({'msg': f"预测服务出错: {str(e)}"}), 500
+
+
+# ... (其余代码不变)
 
 
 @app.route('/history', methods=['GET'])

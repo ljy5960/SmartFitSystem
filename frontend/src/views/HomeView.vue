@@ -26,7 +26,7 @@
                       </el-form-item>
                     </el-col>
                     <el-col :span="12">
-                      <el-form-item label="体重/腰围">
+                      <el-form-item label="腰围">
                         <el-input-number v-model="form.waist" :min="40" :max="150" style="width:100%" />
                       </el-form-item>
                     </el-col>
