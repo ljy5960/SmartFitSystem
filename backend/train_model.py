@@ -9,35 +9,41 @@ from sklearn.pipeline import Pipeline
 
 
 def train_engine():
-    print("🚀 [1/4] 开始训练... (V7: 物理规律锁定版)")
+    print("🚀 [1/4] 开始训练... (V9: 3码合身定制版)")
 
     # ---------------------------------------------------------
-    # 1. 通用背景数据
+    # 1. 基础数据 (调整公式以匹配新逻辑)
     # ---------------------------------------------------------
-    n_samples = 25000
+    n_samples = 30000
     np.random.seed(42)
 
     sizes = np.random.randint(0, 26, n_samples)
     heights = np.random.normal(165, 5, n_samples)
 
-    # 基础公式：标准腰围 = 60 + (尺码 * 3)
-    base_waist = 60 + (sizes * 3.0)
+    # 📐 新公式：陡峭曲线
+    # Size 0 = 60
+    # Size 3 = 78 (变化了18cm / 3个码 = 每个码约 6cm)
+    # 基础腰围 = 60 + (尺码 * 6.0)
+    # 这样 Size 3=78, Size 4=84
+    base_waist = 60 + (sizes * 6.0)
 
     # === A. 合身 (Fit) ===
-    waist_fit = base_waist + np.random.uniform(-5, 5, n_samples)
+    # 范围：标准 +/- 6cm
+    # Size 3 (78): Range [72, 84] -> 包含 78
+    waist_fit = base_waist + np.random.uniform(-6, 6, n_samples)
     df_fit = pd.DataFrame(
         {'size': sizes, 'height_cm': heights, 'waist': waist_fit, 'hips': waist_fit * 1.4, 'bra_num': 34,
          'cup_size': 'b', 'category': 'dresses', 'target': 1})
 
     # === B. 偏小 (Small) ===
+    # 差异 > 8cm
     waist_small = base_waist + np.random.randint(8, 40, n_samples)
     df_small = pd.DataFrame(
         {'size': sizes, 'height_cm': heights, 'waist': waist_small, 'hips': waist_small * 1.4, 'bra_num': 34,
          'cup_size': 'b', 'category': 'dresses', 'target': 0})
 
-    # === C. 偏大 (Large) - 关键修改 ===
-    # 逻辑锁：禁止生成 Size 0 和 Size 1 的偏大样本
-    # 只有当 Size >= 2 时，才允许出现“衣服太大”的情况
+    # === C. 偏大 (Large) ===
+    # 差异 > 8cm
     waist_large = base_waist - np.random.randint(8, 30, n_samples)
     waist_large = np.maximum(waist_large, 45)
 
@@ -47,73 +53,62 @@ def train_engine():
         'category': 'dresses', 'target': 2
     })
 
-    # 过滤掉 Size 0 和 Size 1 的 Large 样本
-    df_large = df_large[df_large['size'] >= 2]
+    # 物理锁：Size 0 禁止 Large (因为0码最小)
+    df_large = df_large[df_large['size'] >= 1]
 
     # ---------------------------------------------------------
-    # 2. ⭐️ 修复 1: 针对腰围 60cm (Size 0-1) 的特调
+    # 2. ⭐️ 修复 1: 腰围 60cm (Size 0, 1)
     # ---------------------------------------------------------
-    print("💉 注入小尺码修正数据 (Waist 60cm)...")
+    print("💉 注入小尺码数据 (Waist 60)...")
     fix_data_small = []
 
-    # 场景: 60cm腰围 穿 0码 (标准60) -> 必须是 Fit (1)
-    # 增加权重到 5000 条，确保覆盖
+    # Size 0 (Std 60) -> Fit
     fix_data_small.append(pd.DataFrame({
-        'size': [0] * 5000,
-        'height_cm': [160] * 5000,  # 配合身高 160
-        'waist': np.random.normal(60, 0.5, 5000),
-        'hips': [85] * 5000, 'bra_num': [32] * 5000, 'cup_size': 'a', 'category': 'dresses',
-        'target': 1  # Fit
-    }))
-
-    # 场景: 60cm腰围 穿 1码 (标准63) -> 60 vs 63 -> 也是 Fit (1)
-    fix_data_small.append(pd.DataFrame({
-        'size': [1] * 5000,
-        'height_cm': [160] * 5000,
-        'waist': np.random.normal(60, 0.5, 5000),
-        'hips': [85] * 5000, 'bra_num': [32] * 5000, 'cup_size': 'a', 'category': 'dresses',
-        'target': 1  # Fit
-    }))
-
-    # 场景: 60cm腰围 穿 3码 (标准69) -> 60 vs 69 -> 衣服大了 -> Large (2)
-    fix_data_small.append(pd.DataFrame({
-        'size': [3] * 3000,
-        'height_cm': [160] * 3000,
+        'size': [0] * 3000, 'height_cm': [160] * 3000,
         'waist': np.random.normal(60, 0.5, 3000),
-        'hips': [85] * 3000, 'bra_num': [32] * 3000, 'cup_size': 'a', 'category': 'dresses',
-        'target': 2  # Large
+        'hips': [60 * 1.4] * 3000, 'bra_num': [32] * 3000, 'cup_size': 'a', 'category': 'dresses',
+        'target': 1  # Fit
+    }))
+
+    # Size 1 (Std 66) -> 60 vs 66 -> 差异6cm -> 处于Fit边缘或Large
+    # 为了保持之前的体验，设为 Fit
+    fix_data_small.append(pd.DataFrame({
+        'size': [1] * 3000, 'height_cm': [160] * 3000,
+        'waist': np.random.normal(60, 0.5, 3000),
+        'hips': [60 * 1.4] * 3000, 'bra_num': [32] * 3000, 'cup_size': 'a', 'category': 'dresses',
+        'target': 1  # Fit
     }))
 
     # ---------------------------------------------------------
-    # 3. ⭐️ 修复 2: 保留针对腰围 78cm (Size 6) 的扫描
+    # 3. ⭐️ 修复 2: 腰围 78cm (Size 3 合身, Size 4 偏大)
     # ---------------------------------------------------------
-    print("💉 注入中尺码修正数据 (Waist 78cm)...")
+    print("💉 注入定制修正数据 (Waist 78)...")
     fix_data_mid = []
 
-    # Size 4, 5 -> Small
-    for s in [4, 5]:
-        fix_data_mid.append(pd.DataFrame({
-            'size': [s] * 2000,
-            'height_cm': [165] * 2000,
-            'waist': np.random.normal(78, 0.5, 2000),
-            'hips': [100] * 2000, 'bra_num': [34] * 2000, 'cup_size': 'b', 'category': 'dresses',
-            'target': 0
-        }))
-    # Size 6 -> Fit
+    correct_hips = 78 * 1.4
+
+    # Size 2 (Std 72) -> 78 vs 72 -> 衣服小了 -> Small
     fix_data_mid.append(pd.DataFrame({
-        'size': [6] * 4000,
-        'height_cm': [165] * 4000,
-        'waist': np.random.normal(78, 0.5, 4000),
-        'hips': [100] * 4000, 'bra_num': [34] * 4000, 'cup_size': 'b', 'category': 'dresses',
-        'target': 1
+        'size': [2] * 3000, 'height_cm': [165] * 3000,
+        'waist': np.random.normal(78, 0.5, 3000),
+        'hips': [correct_hips] * 3000, 'bra_num': [34] * 3000, 'cup_size': 'b', 'category': 'dresses',
+        'target': 0  # Small
     }))
-    # Size 8 -> Large
+
+    # Size 3 (Std 78) -> 78 vs 78 -> 完美匹配 -> Fit
     fix_data_mid.append(pd.DataFrame({
-        'size': [8] * 2000,
-        'height_cm': [165] * 2000,
-        'waist': np.random.normal(78, 0.5, 2000),
-        'hips': [100] * 2000, 'bra_num': [34] * 2000, 'cup_size': 'b', 'category': 'dresses',
-        'target': 2
+        'size': [3] * 5000, 'height_cm': [165] * 5000,
+        'waist': np.random.normal(78, 0.5, 5000),
+        'hips': [correct_hips] * 5000, 'bra_num': [34] * 5000, 'cup_size': 'b', 'category': 'dresses',
+        'target': 1  # Fit
+    }))
+
+    # Size 4 (Std 84) -> 78 vs 84 -> 衣服大了 -> Large
+    fix_data_mid.append(pd.DataFrame({
+        'size': [4] * 3000, 'height_cm': [165] * 3000,
+        'waist': np.random.normal(78, 0.5, 3000),
+        'hips': [correct_hips] * 3000, 'bra_num': [34] * 3000, 'cup_size': 'b', 'category': 'dresses',
+        'target': 2  # Large
     }))
 
     # ---------------------------------------------------------
@@ -138,17 +133,16 @@ def train_engine():
 
     pipeline = Pipeline(steps=[
         ('pre', preprocessor),
-        # 深度适中，避免过拟合
         ('clf', XGBClassifier(n_estimators=300, learning_rate=0.05, max_depth=7))
     ])
 
-    print("🏋️ [3/4] 训练模型...")
+    print("🏋️ [3/4] 训练 V9 模型...")
     pipeline.fit(X, y)
 
     print("💾 [4/4] 保存模型...")
     if not os.path.exists('models'): os.makedirs('models')
     joblib.dump(pipeline, 'models/fit_model.pkl')
-    print("🎉 V7模型已保存！")
+    print("🎉 V9 定制版模型已保存！(3码合身)")
 
 
 if __name__ == "__main__":
