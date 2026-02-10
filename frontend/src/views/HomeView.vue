@@ -26,8 +26,9 @@
                       </el-form-item>
                     </el-col>
                     <el-col :span="12">
-                      <el-form-item label="腰围">
+                      <el-form-item label="腰围 (cm)">
                         <el-input-number v-model="form.waist" :min="40" :max="150" style="width:100%" />
+                        <div v-if="!form.waist" class="input-tip">* 请务必输入腰围数值</div>
                       </el-form-item>
                     </el-col>
                   </el-row>
@@ -55,22 +56,38 @@
                   <el-divider content-position="left">商品详情</el-divider>
 
                   <el-form-item label="商品种类">
-                    <el-radio-group v-model="form.category" @change="resetResult">
+                    <el-radio-group v-model="form.category" @change="resetResult" fill="#409EFF">
                       <el-radio-button label="tops">上衣</el-radio-button>
                       <el-radio-button label="dresses">连衣裙</el-radio-button>
                       <el-radio-button label="bottoms">下装</el-radio-button>
-                    </el-radio-group>
+                      <el-radio-button label="outerwear">外套</el-radio-button> </el-radio-group>
                   </el-form-item>
 
                   <el-form-item label="尝试尺码 (US Size)">
-  <el-slider
-    v-model="form.size"
-    :min="0"
-    :max="26"
-    show-input
-    style="width: 95%; margin-left: 5px;"
-  />
-</el-form-item>
+                    <div style="width: 100%; display: flex; align-items: center;">
+
+                       <el-slider
+                         v-model="form.size"
+                         :min="0"
+                         :max="26"
+                         show-input
+                         input-size="small"
+                         style="flex: 1; margin-right: 10px;"
+                       />
+
+                       <el-tooltip content="点击查看尺码对照表" placement="top">
+                         <el-button
+                           circle
+                           size="small"
+                           type="info"
+                           plain
+                           :icon="QuestionFilled"
+                           @click="showSizeChart = true"
+                           style="flex-shrink: 0; border: none; font-size: 18px;"
+                         />
+                       </el-tooltip>
+                    </div>
+                  </el-form-item>
 
                   <el-button type="primary" size="large" @click="predict" :loading="loading" class="predict-btn">
                     立即分析合身度
@@ -111,7 +128,7 @@
                         </div>
                         <el-progress
                           :percentage="parseFloat(result.probs.fit)"
-                          :status="result.result.includes('Fit') ? 'success' : 'warning'"
+                          :status="result.result.includes('Fit') || result.result.includes('合身') ? 'success' : 'warning'"
                           :stroke-width="10"
                         />
                         <div class="sub-stats">
@@ -191,6 +208,32 @@
       </el-main>
 
       <el-dialog
+        v-model="showSizeChart"
+        title="📏 美国标准尺码对照表 (US Standard)"
+        width="800px"
+        center
+        destroy-on-close
+        align-center
+      >
+        <div style="text-align: center; max-height: 70vh; overflow-y: auto;">
+          <el-image
+            src="/chart.png"
+            fit="contain"
+            alt="Size Chart"
+            style="width: 100%; height: auto;"
+          >
+             <template #placeholder>
+               <div class="image-slot">加载图片中...</div>
+             </template>
+             <template #error>
+               <div style="padding: 40px; color: #909399;">
+                 ❌ 未找到 chart.png 图片，请检查 public 文件夹
+               </div>
+             </template>
+          </el-image>
+        </div>
+      </el-dialog>
+      <el-dialog
         v-model="detailsVisible"
         title="📜 历史记录详情"
         width="600px"
@@ -229,7 +272,7 @@
                <el-descriptions-item label="罩杯">
                  {{ currentDetail.body_data.cup ? currentDetail.body_data.cup.toUpperCase() : '-' }}
                </el-descriptions-item>
-               <el-descriptions-item label="臀围">{{ currentDetail.body_data.hips }}</el-descriptions-item>
+               <el-descriptions-item label="臀围">{{ parseInt(currentDetail.body_data.hips) }}</el-descriptions-item>
              </el-descriptions>
              <div v-else style="color:#999; text-align:center; padding:10px;">
                (该记录暂无身体数据详情)
@@ -248,10 +291,12 @@
 </template>
 
 <script setup>
+// ✅ 修复：清理重复导入，添加 QuestionFilled 图标导入
 import { reactive, ref, onMounted, computed } from 'vue'
 import axios from 'axios'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 // --- 状态定义 ---
 const router = useRouter()
@@ -260,12 +305,13 @@ const historyLoading = ref(false)
 const activeTab = ref('predict')
 const result = ref(null)
 const historyList = ref([])
+const showSizeChart = ref(false) // 控制尺码表弹窗
 
 // 详情弹窗
 const detailsVisible = ref(false)
 const currentDetail = ref(null)
 
-// ✅ 明确定义罩杯选项，解决下拉框无数据问题
+// 罩杯选项
 const cupOptions = [
   { label: 'A', value: 'a' },
   { label: 'B', value: 'b' },
@@ -281,7 +327,8 @@ const cupOptions = [
 const defaultImages = {
   tops: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&q=80',
   dresses: 'https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=600&q=80',
-  bottoms: 'https://images.unsplash.com/photo-1541099649105-f69ad21f3246?w=600&q=80'
+  bottoms: 'https://images.unsplash.com/photo-1541099649105-f69ad21f3246?w=600&q=80',
+  outerwear: 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&q=80' // 👈 新增
 }
 
 // 表单数据
@@ -324,6 +371,7 @@ onMounted(() => {
       console.error("解析用户数据失败", e)
     }
   }
+  fetchHistory() // 初始化时加载历史记录
 })
 
 // --- 核心功能 ---
@@ -349,6 +397,8 @@ const predict = async () => {
 
     // 更新本地存储
     localStorage.setItem('userData', JSON.stringify(form))
+    // 预测成功后刷新历史记录列表
+    fetchHistory()
 
   } catch (error) {
     if (error.response && error.response.status === 401) {
@@ -430,7 +480,8 @@ const formatCategory = (cat) => {
   const map = {
     'tops': '上衣',
     'dresses': '连衣裙',
-    'bottoms': '下装'
+    'bottoms': '下装',
+    'outerwear': '外套' // 👈 新增
   }
   return map[cat] || cat
 }
@@ -478,6 +529,13 @@ const formatCategory = (cat) => {
   padding-left: 12px;
 }
 
+.input-tip {
+  font-size: 12px;
+  color: #F56C6C;
+  line-height: 1.2;
+  margin-top: 4px;
+}
+
 /* 按钮样式 */
 .predict-btn {
   width: 100%;
@@ -486,6 +544,32 @@ const formatCategory = (cat) => {
   height: 45px;
   font-size: 16px;
   box-shadow: 0 4px 10px rgba(64, 158, 255, 0.3);
+}
+
+/* 布局优化：滑块与按钮 */
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%; /* 关键：必须占满宽度 */
+}
+
+.custom-slider {
+  flex: 1; /* 关键：自动伸展 */
+  width: auto; /* 防止宽度被锁死 */
+}
+.help-btn {
+  flex-shrink: 0; /* 防止按钮被挤压 */
+  font-size: 16px;
+  border: none;
+}
+
+.help-btn {
+  font-size: 16px;
+  border: none;
+}
+.help-btn:hover {
+  background-color: #ecf5ff;
 }
 
 /* 结果卡片 */
@@ -512,7 +596,7 @@ const formatCategory = (cat) => {
   height: 400px;
   background: #eef2f7;
   color: #909399;
-  font-size: 30px;
+  font-size: 16px;
 }
 
 /* 结果悬浮层 */

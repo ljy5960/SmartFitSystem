@@ -55,6 +55,8 @@ def get_category_image(category):
         return "https://images.unsplash.com/photo-1434389677669-e08b4cac3105?w=400&h=500&fit=crop"
     elif category == 'bottoms':
         return "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?w=400&h=500&fit=crop"
+    elif category == 'outerwear': # 👈 新增外套图片
+        return "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=400&h=500&fit=crop"
     return "https://placehold.co/300x400?text=No+Image"
 
 
