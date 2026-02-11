@@ -481,7 +481,7 @@ const formatCategory = (cat) => {
     'tops': '上衣',
     'dresses': '连衣裙',
     'bottoms': '下装',
-    'outerwear': '外套' // 👈 新增
+    'outerwear': '外套'
   }
   return map[cat] || cat
 }
