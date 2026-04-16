@@ -123,15 +123,26 @@ const handleAuth = () => {
       try {
         const res = await axios.post(`http://localhost:5000${endpoint}`, form)
 
-        if (!isRegister.value) {
-          localStorage.setItem('token', res.data.token)
-          localStorage.setItem('userData', JSON.stringify(res.data.user))
-          ElMessage.success('登录成功')
-          router.push('/')
-        } else {
-          ElMessage.success('注册成功，请登录')
-          toggleMode()
-        }
+        // ✅ 修改后的代码
+if (!isRegister.value) {
+  localStorage.setItem('token', res.data.token)
+  localStorage.setItem('userData', JSON.stringify(res.data.user))
+
+  // 1. 将后端返回的管理员状态存入 localStorage (存为字符串 'true' 或 'false')
+  localStorage.setItem('is_admin', res.data.is_admin ? 'true' : 'false')
+
+  ElMessage.success('登录成功')
+
+  // 2. 根据权限判断跳转的页面
+  if (res.data.is_admin) {
+    router.push('/admin') // 管理员直接跳转到数据面板
+  } else {
+    router.push('/')      // 普通用户跳转到尺码推荐首页
+  }
+} else {
+  ElMessage.success('注册成功，请登录')
+  toggleMode()
+}
       } catch (err) {
         ElMessage.error(err.response?.data?.msg || '请求失败')
       } finally {

@@ -19,16 +19,43 @@
               <el-col :xs="24" :sm="12">
                 <div class="panel-title">1. 输入您的数据</div>
                 <el-form :model="form" label-position="top" size="large">
-                  <el-row :gutter="20">
-                    <el-col :span="12">
+
+                  <el-row :gutter="15">
+                    <el-col :span="8">
                       <el-form-item label="身高 (cm)">
-                        <el-input-number v-model="form.height" :min="140" :max="220" style="width:100%" />
+                        <el-input-number
+                          v-model="form.height"
+                          :min="140" :max="220"
+                          style="width:100%"
+                          controls-position="right"
+                        />
                       </el-form-item>
                     </el-col>
-                    <el-col :span="12">
+
+                    <el-col :span="8">
                       <el-form-item label="腰围 (cm)">
-                        <el-input-number v-model="form.waist" :min="40" :max="150" style="width:100%" />
-                        <div v-if="!form.waist" class="input-tip">* 请务必输入腰围数值</div>
+                        <el-input-number
+                          v-model="form.waist"
+                          :min="40" :max="150"
+                          style="width:100%"
+                          controls-position="right"
+                        />
+                        <div v-if="!form.waist" class="input-tip">* 必填项</div>
+                      </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                      <el-form-item label="臀围 (选填)">
+                        <el-input-number
+                          v-model="form.hips"
+                          :min="40" :max="150"
+                          style="width:100%"
+                          placeholder="选填"
+                          controls-position="right"
+                        />
+                        <div v-if="!form.hips" style="font-size:12px; color:#909399; margin-top:4px; line-height:1.2;">
+                          不填系统自动推算
+                        </div>
                       </el-form-item>
                     </el-col>
                   </el-row>
@@ -272,7 +299,7 @@
                <el-descriptions-item label="罩杯">
                  {{ currentDetail.body_data.cup ? currentDetail.body_data.cup.toUpperCase() : '-' }}
                </el-descriptions-item>
-               <el-descriptions-item label="臀围">{{ parseInt(currentDetail.body_data.hips) }}</el-descriptions-item>
+               <el-descriptions-item label="臀围">{{ currentDetail.body_data.hips ? parseInt(currentDetail.body_data.hips) : '系统兜底推算' }}</el-descriptions-item>
              </el-descriptions>
              <div v-else style="color:#999; text-align:center; padding:10px;">
                (该记录暂无身体数据详情)
@@ -291,7 +318,6 @@
 </template>
 
 <script setup>
-// ✅ 修复：清理重复导入，添加 QuestionFilled 图标导入
 import { reactive, ref, onMounted, computed } from 'vue'
 import axios from 'axios'
 import { useRouter } from 'vue-router'
@@ -328,14 +354,14 @@ const defaultImages = {
   tops: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&q=80',
   dresses: 'https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=600&q=80',
   bottoms: 'https://images.unsplash.com/photo-1541099649105-f69ad21f3246?w=600&q=80',
-  outerwear: 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&q=80' // 👈 新增
+  outerwear: 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&q=80'
 }
 
-// 表单数据
+// 🌟 亮点 3：表单数据初始化，将 hips 默认值设为 null，体现其选填属性
 const form = reactive({
   height: 165,
   waist: 70,
-  hips: 90,
+  hips: null,
   bra_num: 34,
   cup_size: 'b',
   category: 'dresses',
@@ -365,6 +391,8 @@ onMounted(() => {
       const parsed = JSON.parse(savedData)
       if (parsed.height) form.height = parsed.height
       if (parsed.waist) form.waist = parsed.waist
+      // 🌟 亮点 4：读取本地缓存中的臀围历史数据
+      if (parsed.hips) form.hips = parsed.hips
       if (parsed.bra_num || parsed.bra) form.bra_num = parsed.bra_num || parsed.bra
       if (parsed.cup_size || parsed.cup) form.cup_size = parsed.cup_size || parsed.cup
     } catch (e) {
@@ -564,10 +592,6 @@ const formatCategory = (cat) => {
   border: none;
 }
 
-.help-btn {
-  font-size: 16px;
-  border: none;
-}
 .help-btn:hover {
   background-color: #ecf5ff;
 }

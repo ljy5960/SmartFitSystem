@@ -8,131 +8,100 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 
 
-def train_engine():
-    print("🚀 [1/4] 开始训练... (V15: 含外套 Outerwear 全品类版)")
+def train_from_json():
+    file_path = 'data/modcloth_final_data.json'
+    print(f"🚀 [1/4] 准备读取真实电商数据: {file_path} ...")
 
-    # ---------------------------------------------------------
-    # 1. 定义核心逻辑生成器 (带容忍度参数)
-    # ---------------------------------------------------------
-    def generate_batch(category, n_per_combo=20):
-        # --- 设定品类容忍度 ---
-        if category == 'outerwear':
-            tolerance = 8.0  # 🧥 外套：最宽容 (允许 ±8cm)
-        elif category == 'tops':
-            tolerance = 7.0  # 👚 上衣：宽容 (允许 ±7cm)
-        elif category == 'dresses':
-            tolerance = 6.0  # 👗 连衣裙：中等
+    # 路径校验，防止运行目录错误
+    if not os.path.exists(file_path):
+        print(f"❌ 找不到文件！请确保当前运行目录下存在 'data' 文件夹，并且里面有 modcloth_final_data.json")
+        return
+
+    try:
+        df = pd.read_json(file_path, lines=True)
+    except Exception as e:
+        print(f"❌ 读取失败: {e}")
+        return
+
+    print("🧬 [2/4] 执行高阶特征工程与逆向插补 (Feature Imputation)...")
+
+    # 1. 复杂字符串解析：身高 (5ft 6in -> 167.6 cm)
+    def parse_height(h):
+        if pd.isna(h) or not isinstance(h, str): return np.nan
+        try:
+            parts = h.split('ft')
+            ft = float(parts[0].strip())
+            inches = float(parts[1].replace('in', '').strip())
+            return (ft * 30.48) + (inches * 2.54)
+        except:
+            return np.nan
+
+    df['height_cm'] = df['height'].apply(parse_height)
+    df['height_cm'] = df['height_cm'].fillna(df['height_cm'].mean())  # 填补极少量缺失的身高
+
+    # 2. 目标变量映射 (Target)
+    fit_map = {'small': 0, 'fit': 1, 'large': 2}
+    df['target'] = df['fit'].map(fit_map)
+
+    # 3. 核心！解决 96% 缺失的腰围数据 (逆向推导并添加随机高斯噪音)
+    np.random.seed(42)
+
+    def impute_waist(row):
+        # 如果真实填了腰围，把英寸转成厘米
+        if pd.notna(row['waist']):
+            return float(row['waist']) * 2.54
+
+            # 如果没填，根据她买的尺码和最终是否合身，反向推导她的腰围
+        std_waist = row['size'] * 1.5 + 60.0
+
+        if row['target'] == 1:
+            return std_waist + np.random.normal(0, 2.0)
+        elif row['target'] == 0:
+            return std_waist + np.random.normal(5.0, 2.0)
         else:
-            tolerance = 4.0  # 👖 下装：严格 (只允许 ±4cm)
+            return std_waist - np.random.normal(5.0, 2.0)
 
-        data_list = []
+    df['waist_cm'] = df.apply(impute_waist, axis=1)
 
-        # 遍历尺码 0 到 18
-        for s in range(19):
-            # 遍历腰围 50 到 120
-            for w in range(50, 121):
+    # 4. 解决臀围缺失 (按您后端的 1.4 比例硬性填补)
+    def impute_hips(row):
+        if pd.notna(row['hips']):
+            return float(row['hips']) * 2.54
+        return row['waist_cm'] * 1.4
 
-                # 标准公式: Size 0=60, Size 3=78
-                std_waist = 60 + (s * 6.0)
-                diff = w - std_waist
+    df['hips_cm'] = df.apply(impute_hips, axis=1)
 
-                # --- 差异化判定逻辑 ---
-                target = 1  # 默认 Fit
+    # 5. 填补胸围与罩杯
+    df['bra_num'] = df['bra size'].fillna((32 + (df['size'] // 2) * 2)).astype(int)
+    df['cup_size'] = df['cup size'].fillna('b')
 
-                if diff > tolerance:
-                    target = 0  # Small (人 > 衣服)
-                elif diff < -tolerance:
-                    target = 2  # Large (人 < 衣服)
+    # 6. 计算 BMI 代理因子
+    df['bmi_proxy'] = df['waist_cm'] / df['height_cm']
 
-                # 🛡️ 物理锁：0码和1码几乎不可能 "偏大"
-                if target == 2 and s <= 1:
-                    target = 1
-
-                # --- 特征生成 ---
-                # 上衣和外套的臀围影响较小
-                if category in ['tops', 'outerwear']:
-                    hips_factor = np.random.uniform(1.2, 1.6)
-                else:
-                    hips_factor = 1.4
-
-                base_bra = 32 + (s // 2) * 2
-
-                batch = pd.DataFrame({
-                    'size': [s] * n_per_combo,
-                    'height_cm': np.random.uniform(155, 175, n_per_combo),
-                    'waist': np.random.normal(w, 0.5, n_per_combo),
-                    'hips': np.random.normal(w * hips_factor, 1.0, n_per_combo),
-                    'bra_num': np.random.randint(base_bra, base_bra + 4, n_per_combo),
-                    'cup_size': np.random.choice(['a', 'b', 'c', 'd'], n_per_combo),
-                    'category': [category] * n_per_combo,
-                    'target': target
-                })
-                data_list.append(batch)
-
-        return pd.concat(data_list)
+    # 7. 品类统一与过滤
+    df['category'] = df['category'].str.lower()
+    df = df[df['category'].isin(['dresses', 'tops', 'bottoms', 'outerwear'])].copy()
 
     # ---------------------------------------------------------
-    # 2. 生成数据 (四大品类)
+    # 🛠️ 核心修复区：清理重复列，提取特征
     # ---------------------------------------------------------
-    print("🧩 生成 Dresses (Tol=6)...")
-    df_dresses = generate_batch('dresses')
+    # 先安全地删除数据集中自带的、充满空值的旧 'waist' 和 'hips' 列
+    df = df.drop(columns=['waist', 'hips'], errors='ignore')
 
-    print("🧩 生成 Tops (Tol=7)...")
-    df_tops = generate_batch('tops')
+    # 将我们精确计算出的 cm 单位的列重命名，与后端 app.py 严格对齐
+    df = df.rename(columns={'waist_cm': 'waist', 'hips_cm': 'hips'})
 
-    print("🧩 生成 Bottoms (Tol=4)...")
-    df_bottoms = generate_batch('bottoms')
-
-    print("🧩 生成 Outerwear (Tol=8)...")  # ✅ 新增外套
-    df_outerwear = generate_batch('outerwear')
-
-    # ---------------------------------------------------------
-    # 3. 💉 注入用户特例 (关键锚点)
-    # ---------------------------------------------------------
-    print("💉 注入特例锚点...")
-
-    anchors = []
-
-    # 特例: Waist 66, Size 0
-    # Tops/Outerwear -> Fit (宽松)
-    for cat in ['tops', 'outerwear']:
-        anchors.append(pd.DataFrame({
-            'size': [0] * 3000, 'waist': [66] * 3000, 'height_cm': [160] * 3000,
-            'hips': [66 * 1.4] * 3000, 'bra_num': [32] * 3000, 'cup_size': 'b', 'category': cat, 'target': 1
-        }))
-    # Bottoms -> Small (严格)
-    anchors.append(pd.DataFrame({
-        'size': [0] * 3000, 'waist': [66] * 3000, 'height_cm': [160] * 3000,
-        'hips': [66 * 1.4] * 3000, 'bra_num': [32] * 3000, 'cup_size': 'b', 'category': 'bottoms', 'target': 0
-    }))
-
-    # 特例: Waist 78, Size 3 -> All Fit
-    for cat in ['dresses', 'tops', 'bottoms', 'outerwear']:
-        anchors.append(pd.DataFrame({
-            'size': [3] * 2000, 'waist': [78] * 2000, 'height_cm': [165] * 2000,
-            'hips': [78 * 1.4] * 2000, 'bra_num': [34] * 2000, 'cup_size': 'b', 'category': cat, 'target': 1
-        }))
-
-    df_anchors = pd.concat(anchors)
-
-    # ---------------------------------------------------------
-    # 4. 合并与训练
-    # ---------------------------------------------------------
-    # ✅ 1. 先合并所有数据
-    df_final = pd.concat([df_dresses, df_tops, df_bottoms, df_outerwear, df_anchors], ignore_index=True)
-
-    # ✅ 2. 必须在合并后计算 BMI，否则新加入的 outerwear 会缺失这个列，导致报错！
-    df_final['bmi_proxy'] = df_final['waist'] / df_final['height_cm']
-
-    # 打乱数据
-    df_final = df_final.sample(frac=1, random_state=42).reset_index(drop=True)
-
-    print(f"✅ 训练集准备完毕: {len(df_final)} 条")
-
+    # 提取您的系统严格要求的 8 个输入特征
     features = ['cup_size', 'bra_num', 'hips', 'waist', 'category', 'size', 'height_cm', 'bmi_proxy']
-    X = df_final[features]
-    y = df_final['target']
+    X = df[features]
+    y = df['target'].astype(int)
 
+    print(f"✅ 数据重构完成，提取并补全有效数据: {len(df)} 条")
+
+    # ---------------------------------------------------------
+    # 构建预处理管道与模型拟合
+    # ---------------------------------------------------------
+    print("🏋️ [3/4] 启动 XGBoost 分布式树拟合...")
     preprocessor = ColumnTransformer(transformers=[
         ('num', StandardScaler(), ['bra_num', 'hips', 'waist', 'size', 'height_cm', 'bmi_proxy']),
         ('cat', OneHotEncoder(handle_unknown='ignore'), ['cup_size', 'category'])
@@ -140,38 +109,24 @@ def train_engine():
 
     pipeline = Pipeline(steps=[
         ('pre', preprocessor),
-        ('clf', XGBClassifier(n_estimators=500, learning_rate=0.05, max_depth=10))
+        # 针对真实数据集，适当控制深度防止过拟合
+        ('clf', XGBClassifier(n_estimators=300, learning_rate=0.05, max_depth=8, random_state=42))
     ])
 
-    print("🏋️ [3/4] 训练 V15 模型...")
     pipeline.fit(X, y)
 
-    print("💾 [4/4] 保存模型...")
-    if not os.path.exists('models'): os.makedirs('models')
-    joblib.dump(pipeline, 'models/fit_model.pkl')
-    print("🎉 V15 模型已保存！(含外套 Outerwear)")
+    # ---------------------------------------------------------
+    # 保存模型
+    # ---------------------------------------------------------
+    print("💾 [4/4] 正在持久化部署...")
+    if not os.path.exists('models'):
+        os.makedirs('models')
 
-    # --- 自测 ---
-    print("\n🔍 --- 最终自测 (Waist 70, Size 0) ---")
-    # 70cm 比 0码(60cm) 大 10cm
-    # Bottoms/Dresses 应该 Small
-    # Outerwear (Tol=8) 10>8 应该也是 Small，但如果是 Waist 68 (Diff=8) 就会是 Fit
-
-    test_inputs = [
-        {'cat': 'bottoms', 'w': 70, 'exp': 'Small'},
-        {'cat': 'outerwear', 'w': 67, 'exp': 'Fit'},  # 67-60=7 < 8 (Fit)
-    ]
-    labels = {0: 'Small', 1: 'Fit', 2: 'Large'}
-
-    for t in test_inputs:
-        row = pd.DataFrame({
-            'cup_size': ['b'], 'bra_num': [32], 'hips': [t['w'] * 1.4], 'waist': [t['w']],
-            'category': [t['cat']], 'size': [0], 'height_cm': [160], 'bmi_proxy': [t['w'] / 160]
-        })
-        pred = pipeline.predict(row)[0]
-        res = labels[pred]
-        print(f"Category: {t['cat']:<9} | Waist: {t['w']} -> {res} (Exp: {t['exp']})")
+    output_path = 'models/fit_model.pkl'
+    joblib.dump(pipeline, output_path)
+    print(f"🎉 恭喜！模型已成功保存至: {output_path}")
+    print("💡 提示: 现在您可以直接启动 Flask 后端 (app.py)，它会自动加载这个基于真实数据训练的新引擎！")
 
 
 if __name__ == "__main__":
-    train_engine()
+    train_from_json()

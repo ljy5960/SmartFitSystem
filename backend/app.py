@@ -3,6 +3,7 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from werkzeug.security import generate_password_hash, check_password_hash
 from db_models import db, User, History
+from routes.admin import admin_bp
 import joblib
 import pandas as pd
 import numpy as np
@@ -13,6 +14,7 @@ app = Flask(__name__)
 
 # --- 1. 配置项 ---
 CORS(app, resources={r"/*": {"origins": "*"}})
+app.register_blueprint(admin_bp)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -92,11 +94,14 @@ def login():
             'bra_num': user.bra_size,
             'cup_size': user.cup_size
         }
-        return jsonify({'token': token, 'user': user_info}), 200
+        # ✅ 核心修改：在返回值中加上 is_admin
+        return jsonify({
+            'token': token,
+            'user': user_info,
+            'is_admin': user.is_admin # 把数据库里的权限状态传给前端
+        }), 200
 
     return jsonify({'msg': '用户名或密码错误'}), 401
-
-
 # ... (保留前面的引用和配置)
 
 @app.route('/predict', methods=['POST'])
@@ -116,14 +121,20 @@ def predict():
         raw_w = data.get('waist')
         w_val = float(raw_w) if raw_w is not None else 0.0
 
-        # 🛠️ 核心修复：强制接管臀围逻辑 🛠️
-        # 不管前端传没传 hips (通常是默认值 90)，我们都强制用腰围反推
-        # 只有这样才能匹配 V11 模型的训练分布
-        if w_val > 0:
+        # 🛡️ 核心架构落地：柔性业务兜底机制 🛡️
+        raw_hips = data.get('hips')
+
+        # 判断前端是否传了有效的臀围数据（不是 None，也不是 0）
+        if raw_hips is not None and float(raw_hips) > 0:
+            # 1. 如果用户自己填了，绝对优先尊重用户的真实生理数据
+            hips_val = float(raw_hips)
+            print(f"👤 接收到用户真实臀围输入: {hips_val:.1f}")
+        elif w_val > 0:
+            # 2. 如果用户没填（前端传了 null），触发 API 路由层拦截器，利用人体常识兜底
             hips_val = w_val * 1.4
-            print(f"✅ 强制修正臀围: {hips_val:.1f} (基于腰围 {w_val}, 忽略前端输入)")
+            print(f"🛡️ 触发业务兜底机制: 前端未填，根据腰围推演臀围 -> {hips_val:.1f}")
         else:
-            hips_val = float(data.get('hips') or 0)  # 只有腰围是0时才看前端
+            hips_val = 0.0
 
         raw_bra = data.get('bra_num')
         bra_val = float(raw_bra) if raw_bra is not None else 0.0

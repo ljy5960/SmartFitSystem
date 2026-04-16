@@ -8,6 +8,7 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
+    is_admin = db.Column(db.Boolean, default=False)
     # 用户当前的身体数据缓存
     height = db.Column(db.Float, nullable=True)
     waist = db.Column(db.Float, nullable=True)
@@ -16,6 +17,7 @@ class User(db.Model):
     cup_size = db.Column(db.String(5), nullable=True)
 
     history = db.relationship('History', backref='user', lazy=True)
+
 
 
 class History(db.Model):
@@ -38,3 +40,4 @@ class History(db.Model):
     hips = db.Column(db.Float, nullable=True)
     bra_size = db.Column(db.Float, nullable=True)
     cup_size = db.Column(db.String(5), nullable=True)
+
