@@ -43,9 +43,8 @@
 </template>
 
 <script setup>
-// 🟢 修改点：删除了未使用的 'computed'
 import { ref, reactive } from 'vue'
-import axios from 'axios'
+import request from '@/utils/request' // 使用封装好的 request
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
@@ -55,7 +54,7 @@ const loading = ref(false)
 const ruleFormRef = ref(null)
 const form = reactive({ username: '', password: '' })
 
-// --- 自定义验证逻辑 (保持不变，只是不再显示在输入框里) ---
+// --- 自定义验证逻辑 ---
 
 const validateUser = (rule, value, callback) => {
   if (!value) {
@@ -121,30 +120,33 @@ const handleAuth = () => {
       loading.value = true
       const endpoint = isRegister.value ? '/register' : '/login'
       try {
-        const res = await axios.post(`http://localhost:5000${endpoint}`, form)
+        // ✅ 核心修改点：这里使用导入的 request 替代 axios，并且去掉了硬编码的 http 地址
+        const res = await request.post(endpoint, form)
 
-        // ✅ 修改后的代码
-if (!isRegister.value) {
-  localStorage.setItem('token', res.data.token)
-  localStorage.setItem('userData', JSON.stringify(res.data.user))
+        if (!isRegister.value) {
+          // 这里如果是拦截器封装好的情况，可能 res 直接就是 data。
+          // 如果你的 request.js 里返回的是 response，那么就需要 res.data.token
+          // 如果这里报错，把 res.data 统一改成 res 即可，具体看 utils/request.js 的响应拦截器怎么写的。
+          const responseData = res.data || res
 
-  // 1. 将后端返回的管理员状态存入 localStorage (存为字符串 'true' 或 'false')
-  localStorage.setItem('is_admin', res.data.is_admin ? 'true' : 'false')
+          localStorage.setItem('token', responseData.token)
+          localStorage.setItem('userData', JSON.stringify(responseData.user))
+          localStorage.setItem('is_admin', responseData.is_admin ? 'true' : 'false')
 
-  ElMessage.success('登录成功')
+          ElMessage.success('登录成功')
 
-  // 2. 根据权限判断跳转的页面
-  if (res.data.is_admin) {
-    router.push('/admin') // 管理员直接跳转到数据面板
-  } else {
-    router.push('/')      // 普通用户跳转到尺码推荐首页
-  }
-} else {
-  ElMessage.success('注册成功，请登录')
-  toggleMode()
-}
+          if (responseData.is_admin) {
+            router.push('/admin') // 管理员直接跳转到数据面板
+          } else {
+            router.push('/')      // 普通用户跳转到尺码推荐首页
+          }
+        } else {
+          ElMessage.success('注册成功，请登录')
+          toggleMode()
+        }
       } catch (err) {
-        ElMessage.error(err.response?.data?.msg || '请求失败')
+        // 防止出现 err.response 导致报错的兜底
+        ElMessage.error(err.response?.data?.msg || err.message || '请求失败')
       } finally {
         loading.value = false
       }
@@ -162,22 +164,17 @@ if (!isRegister.value) {
   justify-content: center;
   align-items: center;
   height: 100vh;
-  /* --- 修改点：使用本地背景图 --- */
   /* 确保您的图片路径正确，这里假设图片在 src/assets/images/login-bg.jpg */
   background-image: url('@/assets/images/login-bg.jpg');
-  /* 让图片充满屏幕并保持比例 */
   background-size: cover;
-  /* 图片居中 */
   background-position: center;
-  /* 不重复 */
   background-repeat: no-repeat;
 }
 
 .box-card {
   width: 400px;
-  /* 额外美化：设置卡片背景为半透明白色，并添加毛玻璃效果 */
   background-color: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(10px);
-  border: none; /* 可选：去掉边框使融合感更强 */
+  border: none;
 }
 </style>

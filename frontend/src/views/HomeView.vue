@@ -3,7 +3,7 @@
     <el-container>
       <el-header class="header">
         <div class="logo">
-          <span class="icon">👗</span> SmartFit 智能适配系统
+          <span class="icon"></span> SmartFit 智能适配系统
         </div>
         <div class="user-info">
           <el-button type="danger" plain size="small" @click="logout">退出登录</el-button>
@@ -13,7 +13,7 @@
       <el-main>
         <el-tabs v-model="activeTab" type="border-card" @tab-click="handleTabClick">
 
-          <el-tab-pane label="📏 尺码预测" name="predict">
+          <el-tab-pane label=" 尺码预测" name="predict">
             <el-row :gutter="40">
 
               <el-col :xs="24" :sm="12">
@@ -167,7 +167,7 @@
                   </div>
 
                   <div v-if="!result" class="placeholder-text">
-                    👈 请在左侧输入数据并点击分析
+                     请在左侧输入数据并点击分析
                   </div>
 
                 </el-card>
@@ -175,7 +175,7 @@
             </el-row>
           </el-tab-pane>
 
-          <el-tab-pane label="📜 历史记录" name="history">
+          <el-tab-pane label=" 历史记录" name="history">
 
             <div class="history-header">
               <span>共 {{ historyList.length }} 条记录</span>
@@ -186,7 +186,7 @@
                 @click="handleClearHistory"
                 :disabled="historyList.length === 0"
               >
-                🗑️ 清空记录
+                🗑 清空记录
               </el-button>
             </div>
 
@@ -224,7 +224,7 @@
               <el-table-column label="操作" width="120" fixed="right">
                 <template #default="scope">
                   <el-button link type="primary" size="small" @click="handleViewDetail(scope.row)">
-                    🔍 查看详情
+                     查看详情
                   </el-button>
                 </template>
               </el-table-column>
@@ -262,7 +262,7 @@
       </el-dialog>
       <el-dialog
         v-model="detailsVisible"
-        title="📜 历史记录详情"
+        title=" 历史记录详情"
         width="600px"
         center
         destroy-on-close

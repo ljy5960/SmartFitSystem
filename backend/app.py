@@ -9,11 +9,15 @@ import pandas as pd
 import numpy as np
 import os
 import traceback
+import os
+from dotenv import load_dotenv
+from flask_cors import CORS
 
+load_dotenv()
 app = Flask(__name__)
 
 # --- 配置项 ---
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app, resources={r"/*": {"origins": ["http://localhost:8080", "http://127.0.0.1:8080"]}})
 app.register_blueprint(admin_bp)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
@@ -209,4 +213,6 @@ def clear_history():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run(debug=True, port=5000)
+    # 判断是否为开发环境
+    is_debug = os.getenv('FLASK_ENV') == 'development'
+    app.run(debug=is_debug, port=5000)
