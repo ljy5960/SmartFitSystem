@@ -47,13 +47,9 @@ def train_from_json():
     np.random.seed(42)
 
     def impute_waist(row):
-        # 如果真实填了腰围，把英寸转成厘米
         if pd.notna(row['waist']):
             return float(row['waist']) * 2.54
-
-            # 如果没填，根据她买的尺码和最终是否合身，反向推导她的腰围
         std_waist = row['size'] * 1.5 + 60.0
-
         if row['target'] == 1:
             return std_waist + np.random.normal(0, 2.0)
         elif row['target'] == 0:
@@ -102,6 +98,8 @@ def train_from_json():
     # 构建预处理管道与模型拟合
     # ---------------------------------------------------------
     print("🏋️ [3/4] 启动 XGBoost 分布式树拟合...")
+
+
     preprocessor = ColumnTransformer(transformers=[
         ('num', StandardScaler(), ['bra_num', 'hips', 'waist', 'size', 'height_cm', 'bmi_proxy']),
         ('cat', OneHotEncoder(handle_unknown='ignore'), ['cup_size', 'category'])
@@ -109,9 +107,9 @@ def train_from_json():
 
     pipeline = Pipeline(steps=[
         ('pre', preprocessor),
-        # 针对真实数据集，适当控制深度防止过拟合
         ('clf', XGBClassifier(n_estimators=300, learning_rate=0.05, max_depth=8, random_state=42))
     ])
+
 
     pipeline.fit(X, y)
 

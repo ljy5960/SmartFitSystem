@@ -22,7 +22,7 @@ class User(db.Model):
 
 class History(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
 
     # 商品信息
     category = db.Column(db.String(50), nullable=False)
@@ -31,8 +31,8 @@ class History(db.Model):
 
     # 预测结果
     result = db.Column(db.String(20), nullable=False)
-    confidence = db.Column(db.String(10), nullable=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    confidence = db.Column(db.Float, nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
     # --- 新增：记录当时的身体数据 (快照) ---
     height = db.Column(db.Float, nullable=True)
