@@ -173,6 +173,18 @@
                      请在左侧输入数据并点击分析
                   </div>
 
+                  <div v-if="result && result.explainability" class="explain-card">
+                    <h4>为什么是这个结果？</h4>
+                    <p>{{ result.explainability.reason }}</p>
+                    <p class="guide-text">{{ result.explainability.guidance }}</p>
+                    <div class="size-ladder" v-if="result.size_recommendations">
+                      <el-tag type="warning">修身: US {{ result.size_recommendations.slim }}</el-tag>
+                      <el-tag type="success">常规: US {{ result.size_recommendations.regular }}</el-tag>
+                      <el-tag type="info">宽松: US {{ result.size_recommendations.relaxed }}</el-tag>
+                    </div>
+                  </div>
+
+
                 </el-card>
               </el-col>
             </el-row>
@@ -221,6 +233,37 @@
                   <el-tag :type="getResultTagType(scope.row.result)" size="small">
                     {{ scope.row.result }}
                   </el-tag>
+                </template>
+              </el-table-column>
+
+              <el-table-column label="我的反馈" width="240">
+                <template #default="scope">
+                  <div class="feedback-actions">
+                    <el-button
+                      link
+                      size="small"
+                      :type="scope.row.feedback === 'tight' ? 'danger' : 'info'"
+                      @click="submitFeedback(scope.row, 'tight')"
+                    >
+                      偏紧
+                    </el-button>
+                    <el-button
+                      link
+                      size="small"
+                      :type="scope.row.feedback === 'fit' ? 'success' : 'info'"
+                      @click="submitFeedback(scope.row, 'fit')"
+                    >
+                      合适
+                    </el-button>
+                    <el-button
+                      link
+                      size="small"
+                      :type="scope.row.feedback === 'loose' ? 'warning' : 'info'"
+                      @click="submitFeedback(scope.row, 'loose')"
+                    >
+                      偏松
+                    </el-button>
+                  </div>
                 </template>
               </el-table-column>
 
@@ -329,6 +372,7 @@ import { QuestionFilled } from '@element-plus/icons-vue'
 
 // --- 状态定义 ---
 const router = useRouter()
+const apiBase = process.env.VUE_APP_BASE_API || 'http://127.0.0.1:5000'
 const loading = ref(false)
 const historyLoading = ref(false)
 const activeTab = ref('predict')
@@ -419,7 +463,7 @@ const getAuthHeader = () => {
 const predict = async () => {
   loading.value = true
   try {
-    const res = await axios.post('http://localhost:5000/predict', form, {
+    const res = await axios.post(`${apiBase}/predict`, form, {
       headers: getAuthHeader()
     })
 
@@ -446,7 +490,7 @@ const predict = async () => {
 const fetchHistory = async () => {
   historyLoading.value = true
   try {
-    const res = await axios.get('http://localhost:5000/history', {
+    const res = await axios.get(`${apiBase}/history`, {
       headers: getAuthHeader()
     })
     historyList.value = res.data
@@ -469,7 +513,7 @@ const handleClearHistory = () => {
     }
   ).then(async () => {
     try {
-      await axios.delete('http://localhost:5000/history', {
+      await axios.delete(`${apiBase}/history`, {
         headers: getAuthHeader()
       })
       ElMessage.success('历史记录已清空')
@@ -479,6 +523,21 @@ const handleClearHistory = () => {
     }
   }).catch(() => {})
 }
+
+const submitFeedback = async (row, fitFeedback) => {
+  try {
+    await axios.post(`${apiBase}/history/${row.id}/feedback`, {
+      fit_feedback: fitFeedback
+    }, {
+      headers: getAuthHeader()
+    })
+    row.feedback = fitFeedback
+    ElMessage.success('感谢反馈，已记录')
+  } catch (error) {
+    ElMessage.error(error.response?.data?.msg || '反馈保存失败')
+  }
+}
+
 
 // 查看详情
 const handleViewDetail = (row) => {
@@ -656,6 +715,28 @@ const formatCategory = (cat) => {
 .sub-stats { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #909399; }
 .placeholder-text { text-align: center; color: #909399; padding: 40px; font-style: italic; }
 
+.explain-card {
+  margin-top: 16px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.explain-card h4 {
+  margin: 0 0 8px;
+  color: #303133;
+}
+.guide-text {
+  color: #909399;
+  margin-top: 6px;
+}
+.size-ladder {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 /* 历史记录头部 */
 .history-header {
   display: flex;
@@ -665,6 +746,11 @@ const formatCategory = (cat) => {
   padding: 0 5px;
   color: #909399;
   font-size: 14px;
+}
+
+.feedback-actions {
+  display: flex;
+  gap: 6px;
 }
 
 /* 详情弹窗样式 */
