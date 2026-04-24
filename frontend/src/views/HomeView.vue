@@ -177,6 +177,17 @@
                     <h4>为什么是这个结果？</h4>
                     <p>{{ result.explainability.reason }}</p>
                     <p class="guide-text">{{ result.explainability.guidance }}</p>
+                    <el-alert
+                      v-if="result.explainability.size_consistency_warning"
+                      :title="result.explainability.size_consistency_warning"
+                      type="warning"
+                      :closable="false"
+                      show-icon
+                      style="margin: 8px 0;"
+                    />
+                    <p class="source-tip" v-if="result.decision_source === 'physics_rule'">
+                      当前结果由物理规则保护机制触发（用于避免明显不合理尺码）。
+                    </p>
                     <div class="size-ladder" v-if="result.size_recommendations">
                       <el-tag type="warning">修身: US {{ result.size_recommendations.slim }}</el-tag>
                       <el-tag type="success">常规: US {{ result.size_recommendations.regular }}</el-tag>
@@ -724,6 +735,11 @@ const formatCategory = (cat) => {
 }
 .guide-text {
   color: #909399;
+  margin-top: 6px;
+}
+.source-tip {
+  color: #e6a23c;
+  font-size: 12px;
   margin-top: 6px;
 }
 .size-ladder {

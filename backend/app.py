@@ -58,6 +58,39 @@ def get_size_recommendations(size_val):
     }
 
 
+def _probs_to_percent(prob_arr):
+    return {
+        'small': round(float(prob_arr[0]) * 100, 1),
+        'fit': round(float(prob_arr[1]) * 100, 1),
+        'large': round(float(prob_arr[2]) * 100, 1)
+    }
+
+
+def _build_override_probs(pred_idx):
+    # 规则覆盖时，返回与最终标签一致的概率分布，避免“标签与概率看起来冲突”
+    epsilon = 0.005
+    probs = [epsilon, epsilon, epsilon]
+    probs[pred_idx] = 1.0 - 2 * epsilon
+    return probs
+
+
+def check_size_monotonicity(input_df, model_obj):
+    # 只做轻量检查：size+1 后 small 概率不应显著上升
+    cur_size = float(input_df['size'].iloc[0])
+    if cur_size >= 26:
+        return None
+
+    next_df = input_df.copy()
+    next_df.loc[0, 'size'] = min(cur_size + 1, 26)
+
+    base_small = float(model_obj.predict_proba(input_df)[0][0])
+    next_small = float(model_obj.predict_proba(next_df)[0][0])
+    diff = round((next_small - base_small) * 100, 1)
+    if diff > 8:
+        return f"检测到 size+1 后偏小概率上升 {diff}%，建议结合推荐尺码阶梯再判断。"
+    return None
+
+
 def build_explainability(waist, size_val, category, confidence_level):
     std_waist_for_size = size_val * 1.5 + 60.0
     waist_delta = round(waist - std_waist_for_size, 1)
@@ -154,6 +187,7 @@ def predict():
         })
 
         probs = model.predict_proba(input_df)[0]
+        consistency_warning = check_size_monotonicity(input_df, model)
         # 在 app.py 的 probs = model.predict_proba(input_df)[0] 下方添加：
 
         # 物理常识强制校验：
@@ -162,14 +196,17 @@ def predict():
             # 用户腰围比当前尺码的标准腰围大 10cm 以上，衣服绝对是偏小的！
             pred_idx = 0
             max_prob = 0.99
+            decision_source = 'physics_rule'
         elif w_val < std_waist_for_size - 10:
             # 用户腰围比当前尺码小 10cm 以上，衣服绝对是偏大的！
             pred_idx = 2  # 强行纠正为 偏大 (Large)
             max_prob = 0.99
+            decision_source = 'physics_rule'
         else:
             # 正常范围内，听从 XGBoost 模型的判断
             pred_idx = int(np.argmax(probs))
             max_prob = float(probs[pred_idx])
+            decision_source = 'ml_model'
 
 
         # labels = ['偏小 (Small)', '合身 (Fit)', '偏大 (Large)']
@@ -209,17 +246,18 @@ def predict():
 
         confidence_level = 'low' if max_prob < 0.6 else 'high'
         explainability = build_explainability(w_val, size_val, cat_val, confidence_level)
+        if consistency_warning:
+            explainability['size_consistency_warning'] = consistency_warning
         size_recommendations = get_size_recommendations(size_val)
+        final_probs = probs if decision_source == 'ml_model' else _build_override_probs(pred_idx)
 
         return jsonify({
             'result': result_str,
             'image_url': img_url,
-            'probs': {
-                'small': round(float(probs[0]) * 100, 1),
-                'fit': round(float(probs[1]) * 100, 1),
-                'large': round(float(probs[2]) * 100, 1)
-            },
+            'probs': _probs_to_percent(final_probs),
+            'raw_probs': _probs_to_percent(probs),
             'confidence_level': confidence_level,
+            'decision_source': decision_source,
             'explainability': explainability,
             'size_recommendations': size_recommendations
         })
