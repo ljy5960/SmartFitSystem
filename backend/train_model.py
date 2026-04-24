@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from datetime import datetime, timezone
+import datetime as dt
 from collections import Counter
 
 import joblib
@@ -152,7 +152,7 @@ def train_from_json():
     joblib.dump(pipeline, model_path)
 
     meta = {
-        'trained_at': datetime.now(timezone.utc).isoformat(),
+        'trained_at': dt.datetime.now(dt.timezone.utc).isoformat(),
         'data_rows': int(len(X)),
         'train_rows': int(len(X_train)),
         'test_rows': int(len(X_test)),
