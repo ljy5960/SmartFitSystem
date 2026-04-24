@@ -149,22 +149,25 @@
                          </el-tag>
                       </div>
                       <div class="stats">
-                        <div class="stat-item">
-                          <span>置信度</span>
-                          <span class="stat-val">{{ result.probs.fit }}%</span>
-                        </div>
-                        <el-progress
-                          :percentage="parseFloat(result.probs.fit)"
-                          :status="result.result.includes('Fit') || result.result.includes('合身') ? 'success' : 'warning'"
-                          :stroke-width="10"
-                        />
-                        <div class="sub-stats">
-                          <small>偏小: {{ result.probs.small }}%</small>
-                          <small>偏大: {{ result.probs.large }}%</small>
-                        </div>
+  <div class="stat-item">
+    <span>当前置信度</span>
+    <span class="stat-val">{{ getMaxProb(result.probs) }}%</span>
+  </div>
+
+  <el-progress
+    :percentage="getMaxProb(result.probs)"
+    :color="result.confidence_level === 'low' ? '#F56C6C' : '#67C23A'"
+    :stroke-width="10"
+  />
+
+  <div class="sub-stats">
+    <small>偏小: {{ result.probs.small }}%</small>
+    <small>合身: {{ result.probs.fit }}%</small>
+    <small>偏大: {{ result.probs.large }}%</small>
+  </div>
+</div>
                       </div>
                     </div>
-                  </div>
 
                   <div v-if="!result" class="placeholder-text">
                      请在左侧输入数据并点击分析
@@ -512,6 +515,11 @@ const formatCategory = (cat) => {
     'outerwear': '外套'
   }
   return map[cat] || cat
+}
+ const getMaxProb = (probs) => {
+  if (!probs) return 0
+  // 找出 small, fit, large 中最大的那个值
+  return Math.max(parseFloat(probs.small), parseFloat(probs.fit), parseFloat(probs.large))
 }
 </script>
 

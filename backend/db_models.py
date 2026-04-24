@@ -34,7 +34,7 @@ class History(db.Model):
     confidence = db.Column(db.Float, nullable=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
-    # --- 新增：记录当时的身体数据 (快照) ---
+    # 记录当时的身体数据
     height = db.Column(db.Float, nullable=True)
     waist = db.Column(db.Float, nullable=True)
     hips = db.Column(db.Float, nullable=True)

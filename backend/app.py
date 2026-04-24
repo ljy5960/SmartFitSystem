@@ -16,7 +16,6 @@ from flask_cors import CORS
 load_dotenv()
 app = Flask(__name__)
 
-# --- 配置项 ---
 CORS(app, resources={r"/*": {"origins": ["http://localhost:8080", "http://127.0.0.1:8080"]}})
 app.register_blueprint(admin_bp)
 
@@ -27,14 +26,11 @@ app.config['JWT_SECRET_KEY'] = 'smart-fit-super-secure-secret-key-2026-very-long
 db.init_app(app)
 jwt = JWTManager(app)
 
-# --- 加载模型 (单例驻留模式) ---
 model_path = 'models/fit_model.pkl'
 if os.path.exists(model_path):
     model = joblib.load(model_path)
-    print(f"✅ 算法引擎加载成功: {model_path}")
 else:
     model = None
-    print(f"❌ 警告: 未找到训练好的模型，预测功能将受限")
 
 
 # --- 辅助功能 ---
@@ -48,7 +44,6 @@ def get_category_image(category):
     return images.get(category, "https://placehold.co/300x400?text=No+Image")
 
 
-# --- 注册登录逻辑 (省略，保持原样) ---
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
@@ -75,7 +70,6 @@ def login():
     return jsonify({'msg': '用户名或密码错误'}), 401
 
 
-# --- [核心] 智能推断接口 ---
 @app.route('/predict', methods=['POST'])
 @jwt_required()
 def predict():
@@ -86,7 +80,6 @@ def predict():
         current_user_id = int(get_jwt_identity())
         data = request.json
 
-        # 数据预处理
         h_val = float(data.get('height', 0.0))
         w_val = float(data.get('waist', 0.0))
         bra_val = float(data.get('bra_num', 0.0))
@@ -94,20 +87,16 @@ def predict():
         cup_val = data.get('cup_size', 'b')
         cat_val = data.get('category', 'dresses')
 
-        # [论文架构落地] 柔性业务兜底机制
         raw_hips = data.get('hips')
         if raw_hips is not None and float(raw_hips) > 0:
             hips_val = float(raw_hips)
         elif w_val > 0:
-            # 前端未填时，通过人体工程学经验比例补全特征
             hips_val = w_val * 1.4
         else:
             hips_val = 0.0
 
-        # 计算 BMI 代理因子
         bmi_val = w_val / h_val if h_val > 0 else 0
 
-        # 构造推理 DataFrame
         input_df = pd.DataFrame({
             'cup_size': [cup_val],
             'bra_num': [bra_val],
@@ -119,23 +108,45 @@ def predict():
             'bmi_proxy': [bmi_val]
         })
 
-        # 启动模型前向传播推理
         probs = model.predict_proba(input_df)[0]
-        pred_idx = int(np.argmax(probs))
-        max_prob = float(probs[pred_idx])  # 提取最大概率
+        # 在 app.py 的 probs = model.predict_proba(input_df)[0] 下方添加：
 
-        labels = ['偏小 (Small)', '合身 (Fit)', '偏大 (Large)']
-        result_str = labels[pred_idx]
+        # 物理常识强制校验：
+        std_waist_for_size = size_val * 1.5 + 60.0
+        if w_val > std_waist_for_size + 10:
+            # 用户腰围比当前尺码的标准腰围大 10cm 以上，衣服绝对是偏小的！
+            pred_idx = 0
+            max_prob = 0.99
+        elif w_val < std_waist_for_size - 10:
+            # 用户腰围比当前尺码小 10cm 以上，衣服绝对是偏大的！
+            pred_idx = 2  # 强行纠正为 偏大 (Large)
+            max_prob = 0.99
+        else:
+            # 正常范围内，听从 XGBoost 模型的判断
+            pred_idx = int(np.argmax(probs))
+            max_prob = float(probs[pred_idx])
+
+
+        # labels = ['偏小 (Small)', '合身 (Fit)', '偏大 (Large)']
+        # result_str = labels[pred_idx]
+            # [架构升级] 字典硬绑定，防止模型类别索引漂移
+        label_map = {
+                0: '偏小 (Small)',
+                1: '合身 (Fit)',
+                2: '偏大 (Large)'
+            }
+
+            # 使用 .get() 方法，即使遇到未知的索引，不会让服务器崩溃报错
+        result_str = label_map.get(pred_idx, '未知的合身度 (Unknown)')
         img_url = get_category_image(cat_val)
 
-        # [数据飞轮设计] 持久化推理快照
         new_history = History(
             user_id=current_user_id,
             category=cat_val,
             size_input=size_val,
             image_url=img_url,
             result=result_str,
-            confidence=max_prob,  # 修正为 Float 存入数据库
+            confidence=max_prob,
             height=h_val,
             waist=w_val,
             hips=hips_val,
@@ -144,7 +155,6 @@ def predict():
         )
         db.session.add(new_history)
 
-        # 同步更新用户信息缓存
         user = db.session.get(User, current_user_id)
         if user:
             user.height, user.waist, user.hips = h_val, w_val, hips_val
@@ -168,7 +178,6 @@ def predict():
         return jsonify({'msg': "预测服务内部异常"}), 500
 
 
-# 其他路由 (history/clear) 保持原样
 @app.route('/history', methods=['GET'])
 @jwt_required()
 def get_history():
@@ -213,6 +222,5 @@ def clear_history():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    # 判断是否为开发环境
     is_debug = os.getenv('FLASK_ENV') == 'development'
     app.run(debug=is_debug, port=5000)
