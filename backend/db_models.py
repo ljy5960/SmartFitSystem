@@ -40,4 +40,13 @@ class History(db.Model):
     hips = db.Column(db.Float, nullable=True)
     bra_size = db.Column(db.Float, nullable=True)
     cup_size = db.Column(db.String(5), nullable=True)
+    feedback = db.relationship('Feedback', backref='history', lazy=True, cascade='all, delete-orphan')
 
+
+class Feedback(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    history_id = db.Column(db.Integer, db.ForeignKey('history.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    fit_feedback = db.Column(db.String(20), nullable=False)  # tight / fit / loose
+    note = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)

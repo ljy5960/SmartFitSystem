@@ -1,0 +1,43 @@
+{
+  "trained_at": "2026-04-24T03:40:06.657505Z",
+  "data_rows": 79991,
+  "train_rows": 63992,
+  "test_rows": 15999,
+  "target_distribution": {
+    "small": 12461,
+    "fit": 54948,
+    "large": 12582
+  },
+  "metrics": {
+    "accuracy": 0.3875,
+    "macro_f1": 0.3525,
+    "weighted_f1": 0.4221,
+    "confusion_matrix": [
+      [
+        1067,
+        753,
+        672
+      ],
+      [
+        3695,
+        3963,
+        3332
+      ],
+      [
+        668,
+        679,
+        1170
+      ]
+    ]
+  },
+  "class_weight_map": {
+    "1": 0.4853,
+    "2": 2.1193,
+    "0": 2.1397
+  },
+  "notes": [
+    "Removed target-dependent waist imputation to avoid label leakage.",
+    "Switched to stratified train/test split and stored evaluation metrics.",
+    "Applied class-balanced sample weights to reduce majority-class bias."
+  ]
+}

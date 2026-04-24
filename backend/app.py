@@ -2,16 +2,15 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from werkzeug.security import generate_password_hash, check_password_hash
-from db_models import db, User, History
+from db_models import db, User, History, Feedback
 from routes.admin import admin_bp
 import joblib
 import pandas as pd
 import numpy as np
 import os
 import traceback
-import os
+import json
 from dotenv import load_dotenv
-from flask_cors import CORS
 
 load_dotenv()
 app = Flask(__name__)
@@ -32,6 +31,13 @@ if os.path.exists(model_path):
 else:
     model = None
 
+meta_path = 'models/fit_model_meta.json'
+if os.path.exists(meta_path):
+    with open(meta_path, 'r', encoding='utf-8') as f:
+        model_meta = json.load(f)
+else:
+    model_meta = None
+
 
 # --- 辅助功能 ---
 def get_category_image(category):
@@ -42,6 +48,38 @@ def get_category_image(category):
         'outerwear': "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=400&h=500&fit=crop"
     }
     return images.get(category, "https://placehold.co/300x400?text=No+Image")
+
+
+def get_size_recommendations(size_val):
+    return {
+        'slim': max(size_val - 1, 0),
+        'regular': size_val,
+        'relaxed': min(size_val + 1, 26)
+    }
+
+
+def build_explainability(waist, size_val, category, confidence_level):
+    std_waist_for_size = size_val * 1.5 + 60.0
+    waist_delta = round(waist - std_waist_for_size, 1)
+
+    if waist_delta >= 6:
+        reason = f"你的腰围比该尺码经验腰围高 {waist_delta}cm，当前尺码可能偏紧。"
+    elif waist_delta <= -6:
+        reason = f"你的腰围比该尺码经验腰围低 {abs(waist_delta)}cm，当前尺码可能偏松。"
+    else:
+        reason = f"你的腰围与该尺码经验腰围差值约 {abs(waist_delta)}cm，整体匹配度较高。"
+
+    guidance = "建议补充臀围/胸围信息以提高准确性。" if confidence_level == 'low' else "当前结果可信度较高，可直接参考推荐。"
+
+    return {
+        'top_factors': [
+            {'factor': 'waist_delta_cm', 'value': waist_delta},
+            {'factor': 'category', 'value': category},
+            {'factor': 'size_input', 'value': size_val}
+        ],
+        'reason': reason,
+        'guidance': guidance
+    }
 
 
 @app.route('/register', methods=['POST'])
@@ -87,6 +125,13 @@ def predict():
         cup_val = data.get('cup_size', 'b')
         cat_val = data.get('category', 'dresses')
 
+        if h_val < 120 or h_val > 240:
+            return jsonify({'msg': '身高范围异常，请输入 120~240cm'}), 400
+        if w_val <= 0 or w_val > 180:
+            return jsonify({'msg': '腰围范围异常，请输入 1~180cm'}), 400
+        if size_val < 0 or size_val > 26:
+            return jsonify({'msg': '尺码范围异常，请输入 0~26'}), 400
+
         raw_hips = data.get('hips')
         if raw_hips is not None and float(raw_hips) > 0:
             hips_val = float(raw_hips)
@@ -95,7 +140,7 @@ def predict():
         else:
             hips_val = 0.0
 
-        bmi_val = w_val / h_val if h_val > 0 else 0
+        body_ratio_val = w_val / h_val if h_val > 0 else 0
 
         input_df = pd.DataFrame({
             'cup_size': [cup_val],
@@ -105,7 +150,7 @@ def predict():
             'category': [cat_val],
             'size': [size_val],
             'height_cm': [h_val],
-            'bmi_proxy': [bmi_val]
+            'body_ratio_proxy': [body_ratio_val]
         })
 
         probs = model.predict_proba(input_df)[0]
@@ -162,6 +207,10 @@ def predict():
 
         db.session.commit()
 
+        confidence_level = 'low' if max_prob < 0.6 else 'high'
+        explainability = build_explainability(w_val, size_val, cat_val, confidence_level)
+        size_recommendations = get_size_recommendations(size_val)
+
         return jsonify({
             'result': result_str,
             'image_url': img_url,
@@ -170,7 +219,9 @@ def predict():
                 'fit': round(float(probs[1]) * 100, 1),
                 'large': round(float(probs[2]) * 100, 1)
             },
-            'confidence_level': 'low' if max_prob < 0.6 else 'high'
+            'confidence_level': confidence_level,
+            'explainability': explainability,
+            'size_recommendations': size_recommendations
         })
 
     except Exception as e:
@@ -188,6 +239,8 @@ def get_history():
 
         result = []
         for h in histories:
+            latest_feedback = Feedback.query.filter_by(history_id=h.id, user_id=current_user_id) \
+                .order_by(Feedback.created_at.desc()).first()
             result.append({
                 'id': h.id,
                 'category': h.category,
@@ -202,7 +255,9 @@ def get_history():
                     'hips': h.hips,
                     'bra': h.bra_size,
                     'cup': h.cup_size
-                }
+                },
+                'feedback': latest_feedback.fit_feedback if latest_feedback else None,
+                'feedback_note': latest_feedback.note if latest_feedback else None
             })
         return jsonify(result)
     except Exception as e:
@@ -214,11 +269,49 @@ def clear_history():
     try:
         current_user_id = int(get_jwt_identity())
         db.session.query(History).filter(History.user_id == current_user_id).delete()
+        db.session.query(Feedback).filter(Feedback.user_id == current_user_id).delete()
         db.session.commit()
         return jsonify({'msg': '已清空'}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({'msg': '清除失败'}), 500
+
+
+@app.route('/history/<int:history_id>/feedback', methods=['POST'])
+@jwt_required()
+def submit_feedback(history_id):
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.json or {}
+        fit_feedback = data.get('fit_feedback')
+        note = data.get('note')
+
+        if fit_feedback not in {'tight', 'fit', 'loose'}:
+            return jsonify({'msg': '反馈值非法，必须是 tight/fit/loose'}), 400
+
+        history_item = History.query.filter_by(id=history_id, user_id=current_user_id).first()
+        if not history_item:
+            return jsonify({'msg': '未找到对应历史记录'}), 404
+
+        feedback = Feedback(
+            history_id=history_id,
+            user_id=current_user_id,
+            fit_feedback=fit_feedback,
+            note=note
+        )
+        db.session.add(feedback)
+        db.session.commit()
+        return jsonify({'msg': '反馈已保存'}), 201
+    except Exception:
+        db.session.rollback()
+        return jsonify({'msg': '保存反馈失败'}), 500
+
+
+@app.route('/model/meta', methods=['GET'])
+def get_model_meta():
+    if not model_meta:
+        return jsonify({'msg': '模型指标文件不存在，请先重新训练模型'}), 404
+    return jsonify(model_meta), 200
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()

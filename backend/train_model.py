@@ -1,124 +1,185 @@
-import pandas as pd
-import numpy as np
-import joblib
+import json
 import os
-from xgboost import XGBClassifier
+import re
+from datetime import datetime
+from collections import Counter
+
+import joblib
+import numpy as np
+import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from xgboost import XGBClassifier
+
+RANDOM_STATE = 42
+
+
+def parse_height_to_cm(height_text):
+    if pd.isna(height_text) or not isinstance(height_text, str):
+        return np.nan
+    match = re.match(r"\s*(\d+)\s*ft\s*(\d+)\s*in\s*", height_text.lower())
+    if not match:
+        return np.nan
+    ft, inches = float(match.group(1)), float(match.group(2))
+    return ft * 30.48 + inches * 2.54
+
+
+def load_raw_data(file_path):
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"训练数据不存在: {file_path}")
+    return pd.read_json(file_path, lines=True)
+
+
+def build_features(df):
+    work_df = df.copy()
+
+    # 标签映射
+    work_df['fit'] = work_df['fit'].astype(str).str.lower().str.strip()
+    fit_map = {'small': 0, 'fit': 1, 'large': 2}
+    work_df['target'] = work_df['fit'].map(fit_map)
+    work_df = work_df.dropna(subset=['target'])
+
+    # 类目标准化与过滤
+    work_df['category'] = work_df['category'].astype(str).str.lower().str.strip()
+    category_map = {'new': 'dresses'}
+    work_df['category'] = work_df['category'].replace(category_map)
+    work_df = work_df[work_df['category'].isin(['dresses', 'tops', 'bottoms', 'outerwear'])].copy()
+
+    # 身高解析
+    work_df['height_cm'] = work_df['height'].apply(parse_height_to_cm)
+
+    # 腰围与臀围：统一转 cm
+    work_df['waist'] = pd.to_numeric(work_df['waist'], errors='coerce') * 2.54
+    work_df['hips'] = pd.to_numeric(work_df['hips'], errors='coerce') * 2.54
+
+    # --- 关键修复：避免 label leakage ---
+    # 以前按 target 构造 waist，会把标签信息泄漏到特征中；
+    # 现在改为按 (category, size) 的统计值进行无监督填补。
+    work_df['size'] = pd.to_numeric(work_df['size'], errors='coerce')
+    group_waist_median = work_df.groupby(['category', 'size'])['waist'].transform('median')
+    work_df['waist'] = work_df['waist'].fillna(group_waist_median)
+    work_df['waist'] = work_df['waist'].fillna(work_df['size'] * 1.5 + 60.0)
+
+    # 臀围按组中位数，再兜底腰围比例
+    group_hips_median = work_df.groupby(['category', 'size'])['hips'].transform('median')
+    work_df['hips'] = work_df['hips'].fillna(group_hips_median)
+    work_df['hips'] = work_df['hips'].fillna(work_df['waist'] * 1.35)
+
+    # Bra / cup
+    work_df['bra_num'] = pd.to_numeric(work_df['bra size'], errors='coerce')
+    work_df['bra_num'] = work_df['bra_num'].fillna(34)
+
+    work_df['cup_size'] = work_df['cup size'].astype(str).str.lower().str.strip()
+    work_df['cup_size'] = work_df['cup_size'].replace({'nan': 'b', '': 'b'}).fillna('b')
+
+    # 代理体型比
+    work_df['height_cm'] = work_df['height_cm'].fillna(work_df['height_cm'].median())
+    work_df['body_ratio_proxy'] = work_df['waist'] / work_df['height_cm']
+
+    features = ['cup_size', 'bra_num', 'hips', 'waist', 'category', 'size', 'height_cm', 'body_ratio_proxy']
+    X = work_df[features]
+    y = work_df['target'].astype(int)
+    return X, y
 
 
 def train_from_json():
-    file_path = 'data/modcloth_final_data.json'
+    base_dir = os.path.dirname(__file__)
+    data_path = os.path.join(base_dir, 'data', 'modcloth_final_data.json')
+    model_dir = os.path.join(base_dir, 'models')
+    model_path = os.path.join(model_dir, 'fit_model.pkl')
+    meta_path = os.path.join(model_dir, 'fit_model_meta.json')
 
-    # 路径校验，防止运行目录错误
-    if not os.path.exists(file_path):
-        return
+    df = load_raw_data(data_path)
+    X, y = build_features(df)
 
-    try:
-        df = pd.read_json(file_path, lines=True)
-    except Exception as e:
-        return
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=RANDOM_STATE,
+        stratify=y
+    )
 
+    numeric_features = ['bra_num', 'hips', 'waist', 'size', 'height_cm', 'body_ratio_proxy']
+    categorical_features = ['cup_size', 'category']
 
-    # 1. 复杂字符串解析：身高 (5ft 6in -> 167.6 cm)
-    def parse_height(h):
-        if pd.isna(h) or not isinstance(h, str): return np.nan
-        try:
-            parts = h.split('ft')
-            ft = float(parts[0].strip())
-            inches = float(parts[1].replace('in', '').strip())
-            return (ft * 30.48) + (inches * 2.54)
-        except:
-            return np.nan
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ]), numeric_features),
+            ('cat', Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('onehot', OneHotEncoder(handle_unknown='ignore'))
+            ]), categorical_features),
+        ]
+    )
 
-    df['height_cm'] = df['height'].apply(parse_height)
-    df['height_cm'] = df['height_cm'].fillna(df['height_cm'].mean())  # 填补极少量缺失的身高
-
-    # 2. 目标变量映射 (Target)
-    df['fit'] = df['fit'].astype(str).str.lower().str.strip()
-
-    fit_map = {'small': 0, 'fit': 1, 'large': 2}
-    df['target'] = df['fit'].map(fit_map)
-
-    df = df.dropna(subset=['target'])
-    # fit_map = {'small': 0, 'fit': 1, 'large': 2}
-    # df['target'] = df['fit'].map(fit_map)
-
-    # 3. 96% 缺失的腰围数据
-    np.random.seed(42)
-
-    # def impute_waist(row):
-    #     if pd.notna(row['waist']):
-    #         return float(row['waist']) * 2.54
-    #     std_waist = row['size'] * 1.5 + 60.0
-    #     if row['target'] == 1:
-    #         return std_waist + np.random.normal(0, 2.0)
-    #     elif row['target'] == 0:
-    #         return std_waist + np.random.normal(5.0, 2.0)
-    #     else:
-    #         return std_waist - np.random.normal(5.0, 2.0)
-    def impute_waist(row):
-        if pd.notna(row['waist']):
-            return float(row['waist']) * 2.54
-        std_waist = row['size'] * 1.5 + 60.0
-        # 将原来的 2.0 放大到 4.0 或 5.0
-        if row['target'] == 1:
-            return std_waist + np.random.normal(0, 4.0)
-        elif row['target'] == 0:
-            return std_waist + np.random.normal(6.0, 4.0)
-        else:
-            return std_waist - np.random.normal(6.0, 4.0)
-
-    df['waist_cm'] = df.apply(impute_waist, axis=1)
-
-    # 4. 解决臀围缺失 (后端的 1.4 比例硬性填补)
-    def impute_hips(row):
-        if pd.notna(row['hips']):
-            return float(row['hips']) * 2.54
-        return row['waist_cm'] * 1.4
-
-    df['hips_cm'] = df.apply(impute_hips, axis=1)
-
-    df['bra_num'] = df['bra size'].fillna((32 + (df['size'] // 2) * 2)).astype(int)
-
-    df['cup_size'] = df['cup size'].fillna('b')
-
-    df['bmi_proxy'] = df['waist_cm'] / df['height_cm']
-
-    df['category'] = df['category'].str.lower()
-    df = df[df['category'].isin(['dresses', 'tops', 'bottoms', 'outerwear'])].copy()
-
-    df = df.drop(columns=['waist', 'hips'], errors='ignore')
-
-    df = df.rename(columns={'waist_cm': 'waist', 'hips_cm': 'hips'})
-
-    features = ['cup_size', 'bra_num', 'hips', 'waist', 'category', 'size', 'height_cm', 'bmi_proxy']
-    X = df[features]
-    y = df['target'].astype(int)
-
-
-    # 构建预处理管道与模型拟合
-
-    preprocessor = ColumnTransformer(transformers=[
-        ('num', StandardScaler(), ['bra_num', 'hips', 'waist', 'size', 'height_cm', 'bmi_proxy']),
-        ('cat', OneHotEncoder(handle_unknown='ignore'), ['cup_size', 'category'])
-    ])
+    model = XGBClassifier(
+        n_estimators=350,
+        learning_rate=0.05,
+        max_depth=6,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        objective='multi:softprob',
+        eval_metric='mlogloss',
+        random_state=RANDOM_STATE
+    )
 
     pipeline = Pipeline(steps=[
         ('pre', preprocessor),
-        ('clf', XGBClassifier(n_estimators=300, learning_rate=0.05, max_depth=8, random_state=42))
+        ('clf', model)
     ])
 
+    class_counts = Counter(y_train.tolist())
+    total = float(len(y_train))
+    class_weight_map = {cls: total / (len(class_counts) * count) for cls, count in class_counts.items()}
+    sample_weight = y_train.map(class_weight_map)
 
-    pipeline.fit(X, y)
+    pipeline.fit(X_train, y_train, clf__sample_weight=sample_weight)
+    y_pred = pipeline.predict(X_test)
 
-    # 保存模型
-    if not os.path.exists('models'):
-        os.makedirs('models')
+    acc = float(accuracy_score(y_test, y_pred))
+    report = classification_report(y_test, y_pred, output_dict=True)
+    conf = confusion_matrix(y_test, y_pred).tolist()
 
-    output_path = 'models/fit_model.pkl'
-    joblib.dump(pipeline, output_path)
+    os.makedirs(model_dir, exist_ok=True)
+    joblib.dump(pipeline, model_path)
+
+    meta = {
+        'trained_at': datetime.utcnow().isoformat() + 'Z',
+        'data_rows': int(len(X)),
+        'train_rows': int(len(X_train)),
+        'test_rows': int(len(X_test)),
+        'target_distribution': {
+            'small': int((y == 0).sum()),
+            'fit': int((y == 1).sum()),
+            'large': int((y == 2).sum())
+        },
+        'metrics': {
+            'accuracy': round(acc, 4),
+            'macro_f1': round(float(report['macro avg']['f1-score']), 4),
+            'weighted_f1': round(float(report['weighted avg']['f1-score']), 4),
+            'confusion_matrix': conf,
+        },
+        'class_weight_map': {str(k): round(float(v), 4) for k, v in class_weight_map.items()},
+        'notes': [
+            'Removed target-dependent waist imputation to avoid label leakage.',
+            'Switched to stratified train/test split and stored evaluation metrics.',
+            'Applied class-balanced sample weights to reduce majority-class bias.'
+        ]
+    }
+
+    with open(meta_path, 'w', encoding='utf-8') as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    print('训练完成')
+    print(json.dumps(meta['metrics'], ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
