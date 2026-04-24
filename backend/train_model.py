@@ -18,6 +18,24 @@ from xgboost import XGBClassifier
 RANDOM_STATE = 42
 
 
+def make_json_safe(value):
+    if isinstance(value, dict):
+        return {k: make_json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [make_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [make_json_safe(v) for v in value]
+    if isinstance(value, (dt.datetime, dt.date)):
+        return value.isoformat()
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    return value
+
+
 def parse_height_to_cm(height_text):
     if pd.isna(height_text) or not isinstance(height_text, str):
         return np.nan
@@ -176,7 +194,7 @@ def train_from_json():
     }
 
     with open(meta_path, 'w', encoding='utf-8') as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+        json.dump(make_json_safe(meta), f, ensure_ascii=False, indent=2)
 
     print('训练完成')
     print(json.dumps(meta['metrics'], ensure_ascii=False, indent=2))
