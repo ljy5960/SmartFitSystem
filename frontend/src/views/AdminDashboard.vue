@@ -12,27 +12,75 @@
       </div>
     </div>
 
-    <div class="chart-container">
-      <h3>系统整体预测结果分布</h3>
-      <div ref="pieChartRef" style="width: 100%; height: 400px;"></div>
+        <div class="content-grid">
+      <div class="chart-container">
+        <h3>系统整体预测结果分布</h3>
+        <div ref="pieChartRef" style="width: 100%; height: 400px;"></div>
+      </div>
+
+      <div class="user-table-container">
+        <div class="title-row">
+          <h3>用户列表管理</h3>
+          <el-button type="primary" plain @click="fetchUsers">刷新列表</el-button>
+        </div>
+
+        <el-table :data="users" border stripe style="width: 100%">
+          <el-table-column prop="id" label="用户ID" width="100" />
+          <el-table-column prop="username" label="用户名" min-width="180" />
+          <el-table-column label="身份" width="120">
+            <template #default="scope">
+              <el-tag :type="scope.row.is_admin ? 'warning' : 'success'">
+                {{ scope.row.is_admin ? '管理员' : '普通用户' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="history_count" label="预测记录数" width="130" />
+          <el-table-column label="操作" width="160">
+            <template #default="scope">
+              <el-popconfirm
+                title="确认删除该用户及其所有相关数据吗？"
+                confirm-button-text="确认删除"
+                cancel-button-text="取消"
+                @confirm="handleDeleteUser(scope.row)"
+              >
+                <template #reference>
+                  <el-button
+                    type="danger"
+                    size="small"
+                    :disabled="scope.row.id === adminId || scope.row.is_admin"
+                  >
+                    删除
+                  </el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import * as echarts from 'echarts'
 import axios from 'axios'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus' // 新增：引入消息提示
+import { ElMessage } from 'element-plus'
 
 const totalUsers = ref(0)
 const pieChartRef = ref(null)
 const router = useRouter()
+const users = ref([])
+const adminId = ref(null)
+let chartInstance = null
 
-// ==============================
-// 新增：退出登录逻辑
-// ==============================
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('token')
+  return { Authorization: `Bearer ${token}` }
+}
+
+
 const handleLogout = () => {
   // 1. 清除浏览器本地存储的所有鉴权和用户信息
   localStorage.removeItem('token')
@@ -51,32 +99,75 @@ const handleLogout = () => {
 // ==============================
 const fetchDashboardData = async () => {
   try {
-    const token = localStorage.getItem('token')
 
     // 请替换为您实际的后端地址和端口
     const response = await axios.get('http://127.0.0.1:5000/api/admin/dashboard/stats', {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: getAuthHeaders()
     })
 
     if (response.data.code === 200) {
       totalUsers.value = response.data.data.total_users
+      adminId.value = response.data.data.admin_id
+      await nextTick()
       renderPieChart(response.data.data.prediction_distribution)
     } else {
-      ElMessage.error(response.data.msg)
+      ElMessage.error(response.data.msg || '加载统计数据失败')
       router.push('/login')
     }
   } catch (error) {
-    console.error("请求失败", error)
+    console.error('请求统计数据失败', error)
     if (error.response && error.response.status === 403) {
-      ElMessage.error("安全拦截：您不是管理员，无法访问此页面！")
+      ElMessage.error('安全拦截：您不是管理员，无法访问此页面！')
       router.push('/login')
+      return
     }
+    ElMessage.error('统计数据加载失败，请稍后重试')
+  }
+}
+
+const fetchUsers = async () => {
+  try {
+    const response = await axios.get('http://127.0.0.1:5000/api/admin/users', {
+      headers: getAuthHeaders()
+    })
+
+    if (response.data.code === 200) {
+      users.value = response.data.data.users
+    } else {
+      ElMessage.error(response.data.msg || '获取用户列表失败')
+    }
+    } catch (error) {
+    console.error('请求用户列表失败', error)
+    ElMessage.error('用户列表加载失败，请稍后重试')
+  }
+}
+const handleDeleteUser = async (user) => {
+  try {
+    const response = await axios.delete(`http://127.0.0.1:5000/api/admin/users/${user.id}`, {
+      headers: getAuthHeaders()
+    })
+
+    if (response.data.code === 200) {
+      ElMessage.success(`用户 ${user.username} 删除成功`)
+      await Promise.all([fetchDashboardData(), fetchUsers()])
+    } else {
+      ElMessage.error(response.data.msg || '删除用户失败')
+    }
+  } catch (error) {
+    console.error('删除用户失败', error)
+    ElMessage.error(error.response?.data?.msg || '删除用户失败')
   }
 }
 
 // 渲染 ECharts 饼图 (保持不变)
 const renderPieChart = (chartData) => {
-  const myChart = echarts.init(pieChartRef.value)
+  if (!pieChartRef.value) return
+
+  if (chartInstance) {
+    chartInstance.dispose()
+  }
+
+  chartInstance = echarts.init(pieChartRef.value)
   const option = {
     tooltip: { trigger: 'item' },
     legend: { top: '5%', left: 'center' },
@@ -99,11 +190,18 @@ const renderPieChart = (chartData) => {
       }
     ]
   }
-  myChart.setOption(option)
+ chartInstance.setOption(option)
 }
 
-onMounted(() => {
-  fetchDashboardData()
+onMounted(async () => {
+  await Promise.all([fetchDashboardData(), fetchUsers()])
+})
+
+onBeforeUnmount(() => {
+  if (chartInstance) {
+    chartInstance.dispose()
+    chartInstance = null
+  }
 })
 </script>
 
@@ -149,10 +247,29 @@ onMounted(() => {
   font-weight: bold;
   margin: 10px 0;
 }
-.chart-container {
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+
+.chart-container,
+.user-table-container {
   background: white;
   padding: 20px;
   border-radius: 8px;
   box-shadow: 0 2px 12px 0 rgba(0,0,0,0.1);
+}
+.title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.title-row h3,
+.chart-container h3 {
+  margin: 0;
 }
 </style>
