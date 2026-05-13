@@ -4,6 +4,7 @@ from flask_jwt_extended import JWTManager, create_access_token, jwt_required, ge
 from werkzeug.security import generate_password_hash, check_password_hash
 from db_models import db, User, History, Feedback
 from routes.admin import admin_bp
+from body_measurements import estimate_hips_cm, estimate_waist_cm, is_positive_number
 import joblib
 import pandas as pd
 import numpy as np
@@ -95,7 +96,6 @@ def login():
         token = create_access_token(identity=str(user.id))
         return jsonify({
             'token': token,
-            'user': {'height': user.height, 'waist': user.waist},
             'is_admin': user.is_admin
         }), 200
     return jsonify({'msg': '用户名或密码错误'}), 401
@@ -112,7 +112,7 @@ def predict():
         data = request.json
 
         h_val = float(data.get('height', 0.0))
-        w_val = float(data.get('waist', 0.0))
+
         bra_val = float(data.get('bra_num', 0.0))
         size_val = float(data.get('size', 6.0))
         cup_val = data.get('cup_size', 'b')
@@ -120,19 +120,31 @@ def predict():
 
         if h_val < 120 or h_val > 240:
             return jsonify({'msg': '身高范围异常，请输入 120~240cm'}), 400
-        if w_val <= 0 or w_val > 180:
-            return jsonify({'msg': '腰围范围异常，请输入 1~180cm'}), 400
+
         if size_val < 0 or size_val > 26:
             return jsonify({'msg': '尺码范围异常，请输入 0~26'}), 400
 
-
+        raw_waist = data.get('waist')
         raw_hips = data.get('hips')
-        if raw_hips is not None and float(raw_hips) > 0:
-            hips_val = float(raw_hips)
-        elif w_val > 0:
-            hips_val = w_val * 1.4
+        hips_input = float(raw_hips) if is_positive_number(raw_hips) else None
+
+        if is_positive_number(raw_waist):
+            w_val = float(raw_waist)
         else:
-            hips_val = 0.0
+            w_val = estimate_waist_cm(
+                height_cm=h_val,
+                size_val=size_val,
+                bra_num=bra_val,
+                hips_cm=hips_input
+            )
+
+        if w_val <= 0 or w_val > 180:
+            return jsonify({'msg': '腰围范围异常，请输入 1~180cm，或补充有效臀围/身高/尺码用于系统推算'}), 400
+
+        if hips_input is not None:
+            hips_val = hips_input
+        else:
+            hips_val = estimate_hips_cm(w_val)
 
         bmi_val = w_val / h_val if h_val > 0 else 0
 
@@ -193,11 +205,6 @@ def predict():
             cup_size=cup_val
         )
         db.session.add(new_history)
-
-        user = db.session.get(User, current_user_id)
-        if user:
-            user.height, user.waist, user.hips = h_val, w_val, hips_val
-            user.bra_size, user.cup_size = bra_val, cup_val
 
         db.session.commit()
 

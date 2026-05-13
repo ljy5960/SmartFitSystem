@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from db_models import db, User, History, Feedback
-from sqlalchemy import func
+from sqlalchemy import func, and_, or_
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
 def _get_admin_user():
@@ -27,6 +27,18 @@ def get_dashboard_stats():
         func.count(History.id)
     ).group_by(History.result).all()
 
+    feedback_total = Feedback.query.count()
+    matched_feedback = db.session.query(func.count(Feedback.id)).join(
+        History, Feedback.history_id == History.id
+    ).filter(
+        or_(
+            and_(Feedback.fit_feedback == 'tight', History.result.like('%Small%')),
+            and_(Feedback.fit_feedback == 'fit', History.result.like('%Fit%')),
+            and_(Feedback.fit_feedback == 'loose', History.result.like('%Large%'))
+        )
+    ).scalar() or 0
+    accuracy = round((matched_feedback / feedback_total) * 100, 2) if feedback_total > 0 else None
+
     # 将查询结果转换为前端 ECharts 所需的字典格式
     chart_data = [{"name": row[0], "value": row[1]} for row in results_stats]
 
@@ -35,6 +47,8 @@ def get_dashboard_stats():
         "data": {
             "total_users": total_registered_users,
             "prediction_distribution": chart_data,
+            "feedback_accuracy": accuracy,
+            "feedback_total": feedback_total,
             "admin_id": current_user_id
         }
     })
@@ -42,10 +56,8 @@ def get_dashboard_stats():
 @jwt_required()
 def get_users():
     _, user = _get_admin_user()
-
     if not user or not user.is_admin:
         return jsonify({"code": 403, "msg": "权限不足，仅限管理员访问"}), 403
-
     history_count_subquery = db.session.query(
         History.user_id,
         func.count(History.id).label('history_count')
@@ -71,6 +83,65 @@ def get_users():
     ]
 
     return jsonify({"code": 200, "data": {"users": user_list}}), 200
+
+
+@admin_bp.route('/users/<int:user_id>/details', methods=['GET'])
+@jwt_required()
+def get_user_detail(user_id):
+    _, user = _get_admin_user()
+    if not user or not user.is_admin:
+        return jsonify({"code": 403, "msg": "权限不足，仅限管理员访问"}), 403
+
+    target_user = db.session.get(User, user_id)
+    if not target_user:
+        return jsonify({"code": 404, "msg": "用户不存在"}), 404
+
+    feedback_rows = db.session.query(Feedback, History).join(
+        History, Feedback.history_id == History.id
+    ).filter(
+        Feedback.user_id == user_id
+    ).order_by(Feedback.created_at.desc()).all()
+
+    mismatch_list = []
+    matched_count = 0
+    for feedback, history in feedback_rows:
+        predicted_key = 'unknown'
+        if 'Small' in history.result:
+            predicted_key = 'tight'
+        elif 'Fit' in history.result:
+            predicted_key = 'fit'
+        elif 'Large' in history.result:
+            predicted_key = 'loose'
+
+        is_match = feedback.fit_feedback == predicted_key
+        if is_match:
+            matched_count += 1
+
+        if not is_match:
+            mismatch_list.append({
+                "history_id": history.id,
+                "prediction_result": history.result,
+                "feedback_result": feedback.fit_feedback,
+                "note": feedback.note,
+                "category": history.category,
+                "size_input": history.size_input,
+                "created_at": feedback.created_at.strftime('%Y-%m-%d %H:%M')
+            })
+
+    feedback_total = len(feedback_rows)
+    accuracy = round((matched_count / feedback_total) * 100, 2) if feedback_total > 0 else None
+
+    return jsonify({
+        "code": 200,
+        "data": {
+            "user_id": target_user.id,
+            "username": target_user.username,
+            "feedback_total": feedback_total,
+            "feedback_accuracy": accuracy,
+            "mismatch_feedbacks": mismatch_list
+        }
+    }), 200
+
 
 
 @admin_bp.route('/users/<int:user_id>', methods=['DELETE'])

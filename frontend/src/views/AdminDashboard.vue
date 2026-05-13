@@ -10,6 +10,13 @@
         <h3>全站注册用户数</h3>
         <p class="number">{{ totalUsers }}</p>
       </div>
+            <div class="card">
+        <h3>预测准确度</h3>
+        <p class="number">
+          {{ feedbackAccuracy !== null ? `${feedbackAccuracy}%` : '暂无反馈' }}
+        </p>
+        <small v-if="feedbackTotal > 0">基于 {{ feedbackTotal }} 条反馈</small>
+      </div>
     </div>
 
         <div class="content-grid">
@@ -35,8 +42,11 @@
             </template>
           </el-table-column>
           <el-table-column prop="history_count" label="预测记录数" width="130" />
-          <el-table-column label="操作" width="160">
+         <el-table-column label="操作" width="220">
             <template #default="scope">
+              <el-button type="primary" size="small" plain @click="handleViewDetails(scope.row)">
+                查看详细
+              </el-button>
               <el-popconfirm
                 title="确认删除该用户及其所有相关数据吗？"
                 confirm-button-text="确认删除"
@@ -58,6 +68,33 @@
         </el-table>
       </div>
     </div>
+    <el-dialog
+      v-model="detailsVisible"
+      width="900px"
+      title="用户反馈详情"
+      destroy-on-close
+    >
+      <div v-if="currentUserDetail">
+        <el-descriptions :column="3" border>
+          <el-descriptions-item label="用户ID">{{ currentUserDetail.user_id }}</el-descriptions-item>
+          <el-descriptions-item label="用户名">{{ currentUserDetail.username }}</el-descriptions-item>
+          <el-descriptions-item label="反馈准确度">
+            {{ currentUserDetail.feedback_accuracy !== null ? `${currentUserDetail.feedback_accuracy}%` : '暂无反馈' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <div style="margin: 16px 0 8px; font-weight: 600;">
+          反馈与预测不一致的数据（共 {{ currentUserDetail.mismatch_feedbacks?.length || 0 }} 条）
+        </div>
+        <el-table :data="currentUserDetail.mismatch_feedbacks || []" border stripe>
+          <el-table-column prop="created_at" label="反馈时间" width="160" />
+          <el-table-column prop="category" label="商品种类" width="120" />
+          <el-table-column prop="size_input" label="尺码" width="90" />
+          <el-table-column prop="prediction_result" label="预测结果" min-width="130" />
+          <el-table-column prop="feedback_result" label="用户反馈" width="110" />
+          <el-table-column prop="note" label="备注" min-width="220" show-overflow-tooltip />
+        </el-table>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -73,6 +110,10 @@ const pieChartRef = ref(null)
 const router = useRouter()
 const users = ref([])
 const adminId = ref(null)
+const feedbackAccuracy = ref(null)
+const feedbackTotal = ref(0)
+const detailsVisible = ref(false)
+const currentUserDetail = ref(null)
 let chartInstance = null
 
 const getAuthHeaders = () => {
@@ -108,6 +149,8 @@ const fetchDashboardData = async () => {
     if (response.data.code === 200) {
       totalUsers.value = response.data.data.total_users
       adminId.value = response.data.data.admin_id
+      feedbackAccuracy.value = response.data.data.feedback_accuracy
+      feedbackTotal.value = response.data.data.feedback_total
       await nextTick()
       renderPieChart(response.data.data.prediction_distribution)
     } else {
@@ -122,6 +165,22 @@ const fetchDashboardData = async () => {
       return
     }
     ElMessage.error('统计数据加载失败，请稍后重试')
+  }
+}
+const handleViewDetails = async (user) => {
+  try {
+    const response = await axios.get(`http://127.0.0.1:5000/api/admin/users/${user.id}/details`, {
+      headers: getAuthHeaders()
+    })
+    if (response.data.code === 200) {
+      currentUserDetail.value = response.data.data
+      detailsVisible.value = true
+    } else {
+      ElMessage.error(response.data.msg || '获取用户详情失败')
+    }
+  } catch (error) {
+    console.error('获取用户详情失败', error)
+    ElMessage.error(error.response?.data?.msg || '获取用户详情失败')
   }
 }
 
@@ -232,6 +291,7 @@ onBeforeUnmount(() => {
 
 .stats-cards {
   display: flex;
+  gap: 16px;
   margin-bottom: 30px;
 }
 .card {

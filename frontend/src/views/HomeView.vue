@@ -33,14 +33,15 @@
                     </el-col>
 
                     <el-col :span="8">
-                      <el-form-item label="腰围 (cm)">
+                      <el-form-item label="腰围 (选填)">
                         <el-input-number
                           v-model="form.waist"
                           :min="40" :max="150"
                           style="width:100%"
+                          placeholder="选填"
                           controls-position="right"
                         />
-                        <div v-if="!form.waist" class="input-tip">* 必填项</div>
+                       <div v-if="!form.waist" class="input-tip">不填系统将根据身高、尺码、胸围和臀围自动推算</div>
                       </el-form-item>
                     </el-col>
 
@@ -236,9 +237,16 @@
                 </template>
               </el-table-column>
 
-              <el-table-column label="我的反馈" width="240">
+               <el-table-column label="我的反馈" width="360">
                 <template #default="scope">
                   <div class="feedback-actions">
+                     <el-input
+                      v-model="scope.row.feedback_note_draft"
+                      placeholder="备注（可写入数据库）"
+                      size="small"
+                      clearable
+                      class="feedback-note-input"
+                    />
                     <el-button
                       link
                       size="small"
@@ -404,10 +412,10 @@ const defaultImages = {
   outerwear: 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=600&q=80'
 }
 
-// 🌟 亮点 3：表单数据初始化，将 hips 默认值设为 null，体现其选填属性
+// 🌟 亮点 3：表单数据初始化，将 waist / hips 默认值设为 null，体现其选填属性
 const form = reactive({
   height: 165,
-  waist: 70,
+  waist: null,
   hips: null,
   bra_num: 34,
   cup_size: 'b',
@@ -493,7 +501,10 @@ const fetchHistory = async () => {
     const res = await axios.get(`${apiBase}/history`, {
       headers: getAuthHeader()
     })
-    historyList.value = res.data
+       historyList.value = (res.data || []).map(item => ({
+      ...item,
+      feedback_note_draft: item.feedback_note || ''
+    }))
   } catch (error) {
     if (error.response?.status === 401) logout()
   } finally {
@@ -527,11 +538,13 @@ const handleClearHistory = () => {
 const submitFeedback = async (row, fitFeedback) => {
   try {
     await axios.post(`${apiBase}/history/${row.id}/feedback`, {
-      fit_feedback: fitFeedback
+      fit_feedback: fitFeedback,
+      note: row.feedback_note_draft || null
     }, {
       headers: getAuthHeader()
     })
     row.feedback = fitFeedback
+    row.feedback_note = row.feedback_note_draft || null
     ElMessage.success('感谢反馈，已记录')
   } catch (error) {
     ElMessage.error(error.response?.data?.msg || '反馈保存失败')
@@ -751,6 +764,11 @@ const formatCategory = (cat) => {
 .feedback-actions {
   display: flex;
   gap: 6px;
+  align-items: center;
+}
+
+.feedback-note-input {
+  width: 170px;
 }
 
 /* 详情弹窗样式 */

@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import os
+from body_measurements import estimate_hips_cm, estimate_waist_cm
 from xgboost import XGBClassifier
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -58,38 +59,48 @@ def train_from_json():
     #         return std_waist + np.random.normal(5.0, 2.0)
     #     else:
     #         return std_waist - np.random.normal(5.0, 2.0)
-    def impute_waist(row):
-        if pd.notna(row['waist']):
-            return float(row['waist']) * 2.54
-        std_waist = row['size'] * 1.5 + 60.0
-        # 将原来的 2.0 放大到 4.0 或 5.0
-        if row['target'] == 1:
-            return std_waist + np.random.normal(0, 4.0)
-        elif row['target'] == 0:
-            return std_waist + np.random.normal(6.0, 4.0)
-        else:
-            return std_waist - np.random.normal(6.0, 4.0)
 
-    df['waist_cm'] = df.apply(impute_waist, axis=1)
 
-    # 4. 解决臀围缺失 (后端的 1.4 比例硬性填补)
-    def impute_hips(row):
-        if pd.notna(row['hips']):
-            return float(row['hips']) * 2.54
-        return row['waist_cm'] * 1.4
-
-    df['hips_cm'] = df.apply(impute_hips, axis=1)
+    df['category'] = df['category'].str.lower()
+    df = df[df['category'].isin(['dresses', 'tops', 'bottoms', 'outerwear'])].copy()
 
     df['bra_num'] = df['bra size'].fillna((32 + (df['size'] // 2) * 2)).astype(int)
 
     df['cup_size'] = df['cup size'].fillna('b')
+
+    df['waist_raw'] = pd.to_numeric(df['waist'], errors='coerce')
+    df['hips_raw'] = pd.to_numeric(df['hips'], errors='coerce')
+
+    # 3. 96% 缺失的腰围数据：只使用预测时可获得的身体数据推算，避免 target 标签泄漏
+
+    def impute_waist(row):
+        if pd.notna(row['waist_raw']):
+            return float(row['waist_raw']) * 2.54
+        hips_cm = float(row['hips_raw']) * 2.54 if pd.notna(row['hips_raw']) else None
+        return estimate_waist_cm(
+            height_cm=row['height_cm'],
+            size_val=row['size'],
+            bra_num=row['bra_num'],
+            hips_cm=hips_cm
+        )
+
+    df['waist_cm'] = df.apply(impute_waist, axis=1)
+
+    # 4. 解决臀围缺失：优先使用真实臀围，否则根据腰臀关系由腰围推算
+    def impute_hips(row):
+        if pd.notna(row['hips_raw']):
+            return float(row['hips_raw']) * 2.54
+        return estimate_hips_cm(row['waist_cm'])
+
+    df['hips_cm'] = df.apply(impute_hips, axis=1)
+
 
     df['bmi_proxy'] = df['waist_cm'] / df['height_cm']
 
     df['category'] = df['category'].str.lower()
     df = df[df['category'].isin(['dresses', 'tops', 'bottoms', 'outerwear'])].copy()
 
-    df = df.drop(columns=['waist', 'hips'], errors='ignore')
+    df = df.drop(columns=['waist', 'hips', 'waist_raw', 'hips_raw'], errors='ignore')
 
     df = df.rename(columns={'waist_cm': 'waist', 'hips_cm': 'hips'})
 
@@ -109,11 +120,7 @@ def train_from_json():
         ('pre', preprocessor),
         ('clf', XGBClassifier(n_estimators=300, learning_rate=0.05, max_depth=8, random_state=42))
     ])
-
-
     pipeline.fit(X, y)
-
-    # 保存模型
     if not os.path.exists('models'):
         os.makedirs('models')
 

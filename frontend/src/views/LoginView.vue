@@ -53,6 +53,15 @@ const isRegister = ref(false)
 const loading = ref(false)
 const ruleFormRef = ref(null)
 const form = reactive({ username: '', password: '' })
+const defaultUserData = {
+  height: 165,
+  waist: 70,
+  hips: null,
+  bra_num: 34,
+  cup_size: 'b',
+  category: 'dresses',
+  size: 6
+}
 
 // --- 自定义验证逻辑 ---
 
@@ -130,7 +139,7 @@ const handleAuth = () => {
           const responseData = res.data || res
 
           localStorage.setItem('token', responseData.token)
-          localStorage.setItem('userData', JSON.stringify(responseData.user))
+          localStorage.setItem('userData', JSON.stringify(defaultUserData))
           localStorage.setItem('is_admin', responseData.is_admin ? 'true' : 'false')
 
           ElMessage.success('登录成功')
@@ -141,6 +150,7 @@ const handleAuth = () => {
             router.push('/')      // 普通用户跳转到尺码推荐首页
           }
         } else {
+          localStorage.setItem('userData', JSON.stringify(defaultUserData))
           ElMessage.success('注册成功，请登录')
           toggleMode()
         }
